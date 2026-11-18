@@ -157,6 +157,28 @@ $env:PATHSNAP_API_URL = 'http://127.0.0.1:8000'
 & .\.venv\Scripts\python.exe -m streamlit run src/ui/app.py --server.address 127.0.0.1
 ```
 
+### Evaluator mode with precomputed probabilities
+
+In the API PowerShell window, set these variables before starting the backend:
+
+```powershell
+$env:PATHSNAP_EVALUATION_ROOT = 'C:\path\to\raw\evaluator_test'
+$env:PATHSNAP_EVALUATOR_PREDICTIONS = (Resolve-Path 'data/processed/evaluator_test_predictions').Path
+```
+
+Put the scored Parquet files directly in the prediction directory. Each file
+must contain `trip_id`, `gps_index`, `arc_id`, and numeric `p_correct` in
+`[0, 1]`. Trip IDs are normalized to eight digits. GPS and arc IDs must be
+nonnegative integer row IDs from the matching raw trip. The raw evaluator
+directory must contain `<trip_id>/<trip_id>.track`, `.nodes`, and `.arcs`
+for every scored trip. Start with one trip's scores, then point the API at the
+full export and restart it.
+
+Evaluator mode uses the supplied scores and raw road geometry. Streamlit uses
+the same API and map as before. The API reports network continuity in this
+mode. Clear `PATHSNAP_EVALUATOR_PREDICTIONS` and reset
+`PATHSNAP_EVALUATION_ROOT` to resume the standard student-test setup.
+
 ## API
 
 | Endpoint | Purpose |

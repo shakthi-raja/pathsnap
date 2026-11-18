@@ -20,6 +20,7 @@ import pandas as pd
 from shapely.ops import substring
 
 from src.data.candidates import CandidateConfig, generate_candidates
+from src.data.evaluator import evaluator_candidates, load_evaluator_scores
 from src.data.features import build_candidate_features
 from src.data.labels import align_reference_route
 from src.data.network import build_road_network
@@ -28,7 +29,7 @@ from src.routing.decoder import decode_candidates
 from src.routing.reconstruction import reconstruct_route
 from src.routing.transitions import NetworkTravel
 
-from .evaluation import evaluate_prediction
+from .evaluation import evaluate_prediction, route_continuity
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ class PredictionResult:
 
 
 class PathSnapService:
-    """Loads the trained pipeline once and serves predictions for any trip.
+    """Serve routes from either the trained pipeline or precomputed scores.
 
     Args:
         evaluation_root: Directory holding trip folders for evaluation or
@@ -63,32 +64,48 @@ class PathSnapService:
             ``.arcs`` and, when scoring is possible, ``.route``.
         model_path: Saved scikit-learn pipeline.
         metadata_path: Feature order and model description written at export.
+        evaluator_predictions: Directory of scored Parquets. This mode skips
+            model loading and reference-route evaluation.
     """
 
     def __init__(
         self,
         evaluation_root: str | Path,
-        model_path: str | Path,
-        metadata_path: str | Path,
+        model_path: str | Path | None = None,
+        metadata_path: str | Path | None = None,
         *,
         candidate_config: CandidateConfig | None = None,
+        evaluator_predictions: str | Path | None = None,
     ) -> None:
         self.evaluation_root = Path(evaluation_root)
-        self.model = joblib.load(model_path)
-        self.metadata = json.loads(Path(metadata_path).read_text(encoding="utf-8"))
-        self.features: list[str] = self.metadata["features"]
+        if not self.evaluation_root.is_dir():
+            raise FileNotFoundError(f"Evaluation directory not found: {self.evaluation_root}")
+        self.evaluator_scores = None
+        if evaluator_predictions is not None:
+            self.evaluator_scores = load_evaluator_scores(Path(evaluator_predictions))
+            for trip_id in self.evaluator_scores:
+                for extension in ("track", "nodes", "arcs"):
+                    path = self.evaluation_root / trip_id / f"{trip_id}.{extension}"
+                    if not path.is_file():
+                        raise FileNotFoundError(f"Missing raw evaluator file: {path}")
+            self.metadata = {"model_name": "Precomputed evaluator scores"}
+        else:
+            if model_path is None or metadata_path is None:
+                raise ValueError("The student-test model and metadata paths are required")
+            self.model = joblib.load(model_path)
+            self.metadata = json.loads(Path(metadata_path).read_text(encoding="utf-8"))
+            self.features: list[str] = self.metadata["features"]
         self.candidate_config = candidate_config or CandidateConfig()
         # Heavy objects are cached in a plain dict, never in DataFrame.attrs:
         # pandas deep-copies attrs on .copy(), and deep-copying a road network
         # with its spatial index is pathologically slow.
         self._cache: dict[str, tuple[pd.DataFrame, object, object]] = {}
 
-        if not self.evaluation_root.is_dir():
-            raise FileNotFoundError(f"Evaluation directory not found: {self.evaluation_root}")
-
     # -- discovery ---------------------------------------------------------
     def list_trips(self) -> list[str]:
         """Trip IDs available on the server, discovered from the filesystem."""
+        if self.evaluator_scores is not None:
+            return list(self.evaluator_scores)
         trip_ids = sorted(
             path.name
             for path in self.evaluation_root.iterdir()
@@ -107,11 +124,15 @@ class PathSnapService:
         if cached is not None:
             return cached
 
-        trip_dir = self.evaluation_root / trip_id
-        track, nodes, arcs, _ = load_trip(trip_dir.parent, trip_id, include_route=False)
+        if self.evaluator_scores is not None and trip_id not in self.evaluator_scores:
+            raise FileNotFoundError(f"No evaluator predictions for trip {trip_id}")
+        track, nodes, arcs, _ = load_trip(self.evaluation_root, trip_id, include_route=False)
         network = build_road_network(nodes, arcs)
-        candidates = generate_candidates(track, network, trip_id, self.candidate_config)
-        frame = build_candidate_features(track, network, candidates)
+        if self.evaluator_scores is None:
+            candidates = generate_candidates(track, network, trip_id, self.candidate_config)
+            frame = build_candidate_features(track, network, candidates)
+        else:
+            frame = evaluator_candidates(self.evaluator_scores[trip_id], track, network)
         entry = (frame, network, track)
         self._cache[trip_id] = entry
         return entry
@@ -124,17 +145,21 @@ class PathSnapService:
 
         frame, network, track = self._features_for(trip_id)
 
-        features = frame[self.features].replace([np.inf, -np.inf], np.nan)
-        probabilities = self.model.predict_proba(features)
-        classes = list(self.model.classes_)
-        positive = probabilities[:, classes.index(1)]
+        if self.evaluator_scores is None:
+            features = frame[self.features].replace([np.inf, -np.inf], np.nan)
+            probabilities = self.model.predict_proba(features)
+            classes = list(self.model.classes_)
+            positive = probabilities[:, classes.index(1)]
+        else:
+            positive = frame["p_correct"].to_numpy()
 
         travel = NetworkTravel(network.adjacency)
         route = decode_candidates(frame, positive, travel=travel)
 
         metrics: dict[str, float | int | None] = {}
-        route_path = self.evaluation_root / trip_id / f"{trip_id}.route"
-        if route_path.is_file():
+        if self.evaluator_scores is not None:
+            metrics["route_continuity"] = route_continuity(route.decoded, travel)
+        elif (self.evaluation_root / trip_id / f"{trip_id}.route").is_file():
             _, _, arcs, reference = load_trip(self.evaluation_root, trip_id)
             alignment = align_reference_route(track, network, reference)
             classifier_route = route.decoded[["gps_index"]].merge(
@@ -160,7 +185,7 @@ class PathSnapService:
 
         if len(route.decoded) < len(track):
             warnings.append(
-                f"{len(track) - len(route.decoded)} observations had no candidate within the search radius."
+                f"{len(track) - len(route.decoded)} observations had no scored candidates."
             )
 
         result = PredictionResult(
