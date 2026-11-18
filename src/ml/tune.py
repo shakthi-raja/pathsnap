@@ -1,85 +1,91 @@
 
 import json
+from pathlib import Path
 
+import numpy as np
 import optuna
 import pandas as pd
 
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
-from sklearn.pipeline import make_pipeline
 from sklearn.model_selection import GroupKFold
 from sklearn.metrics import f1_score
+from xgboost import XGBClassifier
 
-from src.ml.train_models import (
-    FEATURES,
-    RANDOM_STATE,
-    N_SPLITS,
-    RESULTS_DIR,
-    load_training_data,
-)
+from src.data.features import FEATURE_COLUMNS
 
-
-# --------------------------------------------------
-# 1. CONFIGURATION
-# --------------------------------------------------
-
-N_TRIALS = 25
+DATA_DIR = Path("data/processed/train")
+RESULTS_DIR = Path("results/ml")
+N_TRIALS = 10
+RANDOM_STATE = 42
+N_SPLITS = 3
 
 
-# --------------------------------------------------
-# 2. DEFINE OPTUNA OBJECTIVE
-# --------------------------------------------------
+def load_data():
+    frames = []
+
+    for path in DATA_DIR.glob("*.parquet"):
+        if path.stem.isdigit() and len(path.stem) == 8:
+            df = pd.read_parquet(path)
+            df = df[df["training_eligible"] == True].copy()
+            df = df[df["label"].notna()].copy()
+            df["trip_id"] = path.stem
+            frames.append(df)
+
+    data = pd.concat(frames, ignore_index=True)
+
+    X = data[FEATURE_COLUMNS].replace(
+        [np.inf, -np.inf], np.nan
+    )
+    y = data["label"].astype(int)
+    groups = data["trip_id"]
+
+    return X, y, groups
+
 
 def objective(trial, X, y, groups):
-
-    # Optuna suggests hyperparameter values.
     params = {
-        "n_estimators": trial.suggest_int(
-            "n_estimators", 80, 300
+        "n_estimators": trial.suggest_int("n_estimators", 100, 250),
+        "max_depth": trial.suggest_int("max_depth", 3, 9),
+        "learning_rate": trial.suggest_float(
+            "learning_rate", 0.02, 0.2, log=True
         ),
-
-        "max_depth": trial.suggest_int(
-            "max_depth", 4, 25
+        "subsample": trial.suggest_float("subsample", 0.7, 1.0),
+        "colsample_bytree": trial.suggest_float(
+            "colsample_bytree", 0.7, 1.0
         ),
-
-        "min_samples_leaf": trial.suggest_int(
-            "min_samples_leaf", 1, 12
+        "min_child_weight": trial.suggest_int(
+            "min_child_weight", 1, 10
         ),
-
-        "max_features": trial.suggest_categorical(
-            "max_features", ["sqrt", "log2"]
+        "reg_lambda": trial.suggest_float(
+            "reg_lambda", 0.1, 10.0, log=True
         ),
     }
 
     cv = GroupKFold(n_splits=N_SPLITS)
+    scores = []
 
-    fold_scores = []
-
-    for train_idx, val_idx in cv.split(X, y, groups):
-
+    for fold, (train_idx, val_idx) in enumerate(
+        cv.split(X, y, groups)
+    ):
         X_train = X.iloc[train_idx]
         X_val = X.iloc[val_idx]
-
         y_train = y.iloc[train_idx]
         y_val = y.iloc[val_idx]
 
-        if y_train.nunique() != 2:
-            raise ValueError(
-                "A training fold does not contain both classes."
-            )
+        imputer = SimpleImputer(strategy="median")
+        X_train = imputer.fit_transform(X_train)
+        X_val = imputer.transform(X_val)
 
-        model = make_pipeline(
-            SimpleImputer(strategy="median"),
-
-            RandomForestClassifier(
-                **params,
-                random_state=RANDOM_STATE,
-                n_jobs=-1,
-            ),
+        model = XGBClassifier(
+            **params,
+            objective="binary:logistic",
+            eval_metric="logloss",
+            n_jobs=-1,
+            random_state=RANDOM_STATE,
+            tree_method="hist",
         )
 
         model.fit(X_train, y_train)
-
         predictions = model.predict(X_val)
 
         score = f1_score(
@@ -89,28 +95,23 @@ def objective(trial, X, y, groups):
             zero_division=0,
         )
 
-        fold_scores.append(score)
+        scores.append(score)
 
-    return sum(fold_scores) / len(fold_scores)
+        print(
+            f"Trial {trial.number + 1}, "
+            f"fold {fold + 1}: Macro F1 = {score:.4f}",
+            flush=True,
+        )
+
+    return float(np.mean(scores))
 
 
-# --------------------------------------------------
-# 3. RUN BAYESIAN OPTIMISATION
-# --------------------------------------------------
+def main():
+    print("Loading training data...", flush=True)
+    X, y, groups = load_data()
 
-def run_optimization():
-
-    print("=" * 60)
-    print("PATHSNAP - OPTUNA HYPERPARAMETER OPTIMISATION")
-    print("=" * 60)
-
-    data = load_training_data()
-
-    X = data[FEATURES].copy()
-
-    y = data["label"].astype(int)
-
-    groups = data["trip_id"].astype(str)
+    print(f"Training rows: {len(X):,}", flush=True)
+    print(f"Training trips: {groups.nunique()}", flush=True)
 
     study = optuna.create_study(
         direction="maximize",
@@ -119,65 +120,37 @@ def run_optimization():
         ),
     )
 
+    print("\nStarting XGBoost Bayesian optimisation...", flush=True)
+
     study.optimize(
-        lambda trial: objective(
-            trial, X, y, groups
-        ),
+        lambda trial: objective(trial, X, y, groups),
         n_trials=N_TRIALS,
     )
 
-    # --------------------------------------------------
-    # 4. SAVE OPTIMISATION RESULTS
-    # --------------------------------------------------
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    RESULTS_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    trials_path = RESULTS_DIR / "optuna_trials.csv"
-
-    study.trials_dataframe(
-        attrs=("number", "value", "params", "state")
-    ).to_csv(
-        trials_path,
+    study.trials_dataframe().to_csv(
+        RESULTS_DIR / "optuna_trials.csv",
         index=False,
     )
 
-    best_results = {
-        "model": "RandomForest",
+    results = {
+        "model": "XGBoost",
         "best_macro_f1": study.best_value,
         "best_parameters": study.best_params,
         "number_of_trials": N_TRIALS,
-        "random_state": RANDOM_STATE,
         "optimization_metric": "macro_f1",
+        "random_state": RANDOM_STATE,
     }
 
-    params_path = RESULTS_DIR / "best_params.json"
+    with open(RESULTS_DIR / "best_params.json", "w") as f:
+        json.dump(results, f, indent=4)
 
-    with open(params_path, "w") as file:
-        json.dump(
-            best_results,
-            file,
-            indent=4,
-        )
-
-    print("\nBEST RESULTS")
-    print("=" * 60)
-
+    print("\nOPTIMISATION COMPLETE")
     print("Best Macro F1:", study.best_value)
     print("Best parameters:", study.best_params)
+    print("Results saved in:", RESULTS_DIR)
 
-    print("\nSaved:")
-    print(trials_path)
-    print(params_path)
-
-    return study
-
-
-# --------------------------------------------------
-# 5. MAIN
-# --------------------------------------------------
 
 if __name__ == "__main__":
-    run_optimization()
+    main()

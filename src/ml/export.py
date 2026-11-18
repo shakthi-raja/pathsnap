@@ -3,103 +3,106 @@ import json
 from pathlib import Path
 
 import joblib
-from sklearn.pipeline import make_pipeline
+import numpy as np
+import pandas as pd
+
 from sklearn.impute import SimpleImputer
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.pipeline import Pipeline
+from xgboost import XGBClassifier
 
-from src.ml.train_models import (
-    FEATURES,
-    RANDOM_STATE,
-    PROJECT_ROOT,
-    load_training_data,
-)
+from src.data.features import FEATURE_COLUMNS
+
+DATA_DIR = Path("data/processed/train")
+ARTIFACTS_DIR = Path("artifacts")
+RESULTS_DIR = Path("results/ml")
+
+RANDOM_STATE = 42
 
 
-ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
+def load_training_data():
+    frames = []
+
+    for path in DATA_DIR.glob("*.parquet"):
+        if path.stem.isdigit() and len(path.stem) == 8:
+            df = pd.read_parquet(path)
+            df = df[df["training_eligible"] == True].copy()
+            df = df[df["label"].notna()].copy()
+            df["trip_id"] = path.stem
+            frames.append(df)
+
+    if not frames:
+        raise RuntimeError("No eligible training data found.")
+
+    return pd.concat(frames, ignore_index=True)
 
 
-def export_model(model, model_name, metadata=None):
+def train_final_model():
+    print("Loading all training trips...", flush=True)
 
-    ARTIFACTS_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
+    data = load_training_data()
+
+    X = data[FEATURE_COLUMNS].replace(
+        [np.inf, -np.inf], np.nan
     )
+    y = data["label"].astype(int)
+
+    print(f"Training rows: {len(data):,}", flush=True)
+    print(f"Training trips: {data['trip_id'].nunique()}", flush=True)
+
+    params_path = RESULTS_DIR / "best_params.json"
+
+    with open(params_path, "r") as file:
+        tuning_results = json.load(file)
+
+    best_params = tuning_results["best_parameters"]
+
+    print("Using Optuna's best parameters:", best_params, flush=True)
+
+    model = Pipeline([
+        ("imputer", SimpleImputer(strategy="median")),
+        ("classifier", XGBClassifier(
+            **best_params,
+            objective="binary:logistic",
+            eval_metric="logloss",
+            n_jobs=-1,
+            random_state=RANDOM_STATE,
+            tree_method="hist",
+        ))
+    ])
+
+    print("\nTraining final XGBoost model...", flush=True)
+    model.fit(X, y)
+
+    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
     model_path = ARTIFACTS_DIR / "final_pipeline.joblib"
-
     metadata_path = ARTIFACTS_DIR / "model_metadata.json"
 
-    # Save the complete pipeline.
     joblib.dump(model, model_path)
 
-    model_metadata = {
+    metadata = {
         "project": "PathSnap",
-        "model_name": model_name,
-        "features": FEATURES,
+        "model_name": "XGBoost",
+        "features": FEATURE_COLUMNS,
         "positive_class": 1,
         "positive_class_meaning": "Correct road candidate",
         "negative_class": 0,
         "negative_class_meaning": "Incorrect road candidate",
+        "training_trips": int(data["trip_id"].nunique()),
+        "training_rows": int(len(data)),
+        "hyperparameters": best_params,
+        "optuna_best_macro_f1": tuning_results["best_macro_f1"],
         "random_state": RANDOM_STATE,
-        "training_partition": "80 training trips",
+        "prediction_output": "predict_proba",
     }
 
-    if metadata:
-        model_metadata.update(metadata)
-
     with open(metadata_path, "w") as file:
-        json.dump(
-            model_metadata,
-            file,
-            indent=4,
-        )
+        json.dump(metadata, file, indent=4)
 
-    print("\nModel exported successfully!")
+    print("\nFINAL MODEL EXPORTED SUCCESSFULLY!")
     print("Model:", model_path)
     print("Metadata:", metadata_path)
 
 
-def train_final_model(best_params=None):
-
-    data = load_training_data()
-
-    X = data[FEATURES].copy()
-    y = data["label"].astype(int)
-
-    params = best_params or {
-        "n_estimators": 150,
-        "random_state": RANDOM_STATE,
-        "n_jobs": -1,
-    }
-
-    # Train on all verified training trips.
-    model = make_pipeline(
-        SimpleImputer(strategy="median"),
-        RandomForestClassifier(**params),
-    )
-
-    model.fit(X, y)
-
-    metadata = {
-        "training_rows": len(data),
-        "training_trips": int(data["trip_id"].nunique()),
-        "hyperparameters": params,
-    }
-
-    export_model(
-        model,
-        "RandomForest",
-        metadata,
-    )
-
-    return model
-
-
 if __name__ == "__main__":
-
-    print("PathSnap model export module")
-
-    print(
-        "This module is ready. "
-        "Run final training after model comparison and tuning."
-    )
+    train_final_model()
