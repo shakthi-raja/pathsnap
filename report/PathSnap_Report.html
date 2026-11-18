@@ -251,6 +251,96 @@ so there is no evidence of overfitting to the training cities.</p>
   <figcaption>Student-test log loss. The two tree ensembles separate from the rest, and the single
   decision tree is badly over-confident.</figcaption>
 </figure>
+
+<h3>3.4 Final evaluation on the reserved partition</h3>
+<p>The ten reserved evaluator trips were supplied after the model, the decoder and every
+hyperparameter had already been fixed. They were used for scoring only. No choice in this report
+depends on them.</p>
+<table>
+<tr><th>Trip</th><th class="num">Route pieces</th><th class="num">Evaluable observations</th>
+<th class="num">Classifier Top-1</th><th class="num">Decoded accuracy</th>
+<th class="num">Continuity</th><th class="num">Candidate miss</th><th class="num">Seconds</th></tr>
+<tr><td>00000015</td>
+<td class="num">0</td>
+<td class="num">3832</td>
+<td class="num">24.1%</td>
+<td class="num">46.1%</td>
+<td class="num">100.0%</td>
+<td class="num">2.6%</td>
+<td class="num">27.9</td></tr><tr><td>00000017</td>
+<td class="num">0</td>
+<td class="num">360</td>
+<td class="num">94.4%</td>
+<td class="num">98.1%</td>
+<td class="num">100.0%</td>
+<td class="num">0.6%</td>
+<td class="num">16.4</td></tr><tr><td>00000023</td>
+<td class="num">0</td>
+<td class="num">343</td>
+<td class="num">98.5%</td>
+<td class="num">99.4%</td>
+<td class="num">100.0%</td>
+<td class="num">0.3%</td>
+<td class="num">2.3</td></tr><tr><td>00000030</td>
+<td class="num">0</td>
+<td class="num">210</td>
+<td class="num">77.6%</td>
+<td class="num">88.6%</td>
+<td class="num">100.0%</td>
+<td class="num">2.4%</td>
+<td class="num">8.1</td></tr><tr><td>00000049</td>
+<td class="num">0</td>
+<td class="num">1948</td>
+<td class="num">97.5%</td>
+<td class="num">99.5%</td>
+<td class="num">100.0%</td>
+<td class="num">0.0%</td>
+<td class="num">34.3</td></tr><tr><td>00000059</td>
+<td class="num">0</td>
+<td class="num">372</td>
+<td class="num">96.2%</td>
+<td class="num">98.1%</td>
+<td class="num">100.0%</td>
+<td class="num">0.0%</td>
+<td class="num">5.4</td></tr><tr><td>00000067</td>
+<td class="num">0</td>
+<td class="num">627</td>
+<td class="num">71.3%</td>
+<td class="num">90.6%</td>
+<td class="num">100.0%</td>
+<td class="num">0.0%</td>
+<td class="num">3.9</td></tr><tr><td>00000073</td>
+<td class="num">0</td>
+<td class="num">540</td>
+<td class="num">96.7%</td>
+<td class="num">99.4%</td>
+<td class="num">100.0%</td>
+<td class="num">0.0%</td>
+<td class="num">5.5</td></tr><tr><td>00000087</td>
+<td class="num">0</td>
+<td class="num">835</td>
+<td class="num">97.2%</td>
+<td class="num">99.6%</td>
+<td class="num">100.0%</td>
+<td class="num">0.0%</td>
+<td class="num">8.7</td></tr><tr><td>00000094</td>
+<td class="num">0</td>
+<td class="num">1397</td>
+<td class="num">65.1%</td>
+<td class="num">79.3%</td>
+<td class="num">100.0%</td>
+<td class="num">0.3%</td>
+<td class="num">14.3</td></tr>
+</table>
+<p>Across the ten reserved trips the decoded accuracy averaged
+<strong>89.9%</strong>, between
+46.1% and 99.6%.
+The classifier alone averaged 81.9%, so decoding was worth
+<strong>8.0 percentage points</strong> on unseen trips.</p>
+<p>Trip 00000015 is the clear outlier at 46.1%.
+Its road extract is sparse, 3,225 arcs across a 53 km journey, so long stretches repeat a single
+arc and only 3,832 of 6,854 observations produced a confident alignment. The result is reported
+rather than explained away.</p>
 <h2>4. Bayesian hyperparameter optimisation</h2>
 <p>After the five-model comparison, the selected algorithm was tuned with Optuna's Tree-structured
 Parzen Estimator, a Bayesian sampler that models which regions of the space produce good trials

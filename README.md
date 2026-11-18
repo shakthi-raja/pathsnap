@@ -116,6 +116,20 @@ Outputs:
 | `artifacts/final_pipeline.joblib` | selected model |
 | `artifacts/model_metadata.json` | feature order and selection evidence |
 
+## Evaluator partition
+
+The ten reserved trips arrive as a folder of trip directories. Point the backend
+at it and list what it finds:
+
+```bash
+export PATHSNAP_EVALUATION_ROOT=/path/to/evaluator_test
+python -m src.api.main
+```
+
+Nothing is hardcoded: `GET /trips` returns whatever trip folders exist under that
+path, and each prediction is scored against that trip's own reference route. The
+recorded run over the reserved partition is in `results/evaluator_test_results.json`.
+
 ## Running the system
 
 **Laptop 1, the backend:**

@@ -1,0 +1,154 @@
+{
+  "summary": {
+    "trips": 10,
+    "decoded_accuracy_mean": 0.898722509105985,
+    "decoded_accuracy_min": 0.46085594989561585,
+    "decoded_accuracy_max": 0.9964071856287425,
+    "top1_accuracy_mean": 0.818783286211413,
+    "decoding_gain_points": 7.993922289457189,
+    "model": "HistGradientBoosting",
+    "note": "Reference routes used for scoring only. Nothing was tuned on this partition."
+  },
+  "trips": {
+    "00000015": {
+      "metrics": {
+        "pointwise_accuracy": 0.46085594989561585,
+        "top1_accuracy": 0.24112734864300625,
+        "route_continuity": 0.9997081570115278,
+        "classifier_continuity": 0.9975193345979863,
+        "candidate_miss_rate": 0.026096033402922755,
+        "evaluated_observations": 3832
+      },
+      "polylines": 15,
+      "runtime_ms": 27887.261760999536,
+      "observations": 6854,
+      "warnings": []
+    },
+    "00000017": {
+      "metrics": {
+        "pointwise_accuracy": 0.9805555555555555,
+        "top1_accuracy": 0.9444444444444444,
+        "route_continuity": 1.0,
+        "classifier_continuity": 0.9881040892193309,
+        "candidate_miss_rate": 0.005555555555555556,
+        "evaluated_observations": 360
+      },
+      "polylines": 2,
+      "runtime_ms": 16368.461603000469,
+      "observations": 1346,
+      "warnings": []
+    },
+    "00000023": {
+      "metrics": {
+        "pointwise_accuracy": 0.9941690962099126,
+        "top1_accuracy": 0.9854227405247813,
+        "route_continuity": 1.0,
+        "classifier_continuity": 0.9978118161925602,
+        "candidate_miss_rate": 0.0029154518950437317,
+        "evaluated_observations": 343
+      },
+      "polylines": 2,
+      "runtime_ms": 2260.6149580024066,
+      "observations": 458,
+      "warnings": []
+    },
+    "00000030": {
+      "metrics": {
+        "pointwise_accuracy": 0.8857142857142857,
+        "top1_accuracy": 0.7761904761904762,
+        "route_continuity": 1.0,
+        "classifier_continuity": 0.9173047473200613,
+        "candidate_miss_rate": 0.023809523809523808,
+        "evaluated_observations": 210
+      },
+      "polylines": 2,
+      "runtime_ms": 8060.853298000438,
+      "observations": 654,
+      "warnings": []
+    },
+    "00000049": {
+      "metrics": {
+        "pointwise_accuracy": 0.9948665297741273,
+        "top1_accuracy": 0.9748459958932238,
+        "route_continuity": 1.0,
+        "classifier_continuity": 0.9882620219613782,
+        "candidate_miss_rate": 0.0,
+        "evaluated_observations": 1948
+      },
+      "polylines": 1,
+      "runtime_ms": 34332.6792020016,
+      "observations": 2642,
+      "warnings": []
+    },
+    "00000059": {
+      "metrics": {
+        "pointwise_accuracy": 0.9811827956989247,
+        "top1_accuracy": 0.9623655913978495,
+        "route_continuity": 1.0,
+        "classifier_continuity": 0.9883495145631068,
+        "candidate_miss_rate": 0.0,
+        "evaluated_observations": 372
+      },
+      "polylines": 1,
+      "runtime_ms": 5350.249489998532,
+      "observations": 1031,
+      "warnings": []
+    },
+    "00000067": {
+      "metrics": {
+        "pointwise_accuracy": 0.9059011164274322,
+        "top1_accuracy": 0.7129186602870813,
+        "route_continuity": 1.0,
+        "classifier_continuity": 0.985792349726776,
+        "candidate_miss_rate": 0.0,
+        "evaluated_observations": 627
+      },
+      "polylines": 1,
+      "runtime_ms": 3864.776810998592,
+      "observations": 916,
+      "warnings": []
+    },
+    "00000073": {
+      "metrics": {
+        "pointwise_accuracy": 0.9944444444444445,
+        "top1_accuracy": 0.9666666666666667,
+        "route_continuity": 1.0,
+        "classifier_continuity": 0.9956255468066492,
+        "candidate_miss_rate": 0.0,
+        "evaluated_observations": 540
+      },
+      "polylines": 1,
+      "runtime_ms": 5531.875513999694,
+      "observations": 1144,
+      "warnings": []
+    },
+    "00000087": {
+      "metrics": {
+        "pointwise_accuracy": 0.9964071856287425,
+        "top1_accuracy": 0.9724550898203593,
+        "route_continuity": 1.0,
+        "classifier_continuity": 0.927038626609442,
+        "candidate_miss_rate": 0.0,
+        "evaluated_observations": 835
+      },
+      "polylines": 1,
+      "runtime_ms": 8693.577906997234,
+      "observations": 1399,
+      "warnings": []
+    },
+    "00000094": {
+      "metrics": {
+        "pointwise_accuracy": 0.7931281317108089,
+        "top1_accuracy": 0.651395848246242,
+        "route_continuity": 1.0,
+        "classifier_continuity": 0.9978321461752865,
+        "candidate_miss_rate": 0.002863278453829635,
+        "evaluated_observations": 1397
+      },
+      "polylines": 1,
+      "runtime_ms": 14333.082778000971,
+      "observations": 3230,
+      "warnings": []
+    }
+  }
+}
