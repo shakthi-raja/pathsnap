@@ -27,8 +27,23 @@ _CSS_PATH = Path(__file__).parent / "assets" / "theme.css"
 
 #: Metrics the backend reports as fractions.
 _FRACTION_METRICS = frozenset(
-    {"pointwise_accuracy", "route_continuity", "top1_accuracy", "candidate_miss_rate"}
+    {
+        "pointwise_accuracy",
+        "route_continuity",
+        "classifier_continuity",
+        "top1_accuracy",
+        "candidate_miss_rate",
+    }
 )
+
+#: Metrics that read better with a fixed name than the generic transformation.
+_LABEL_OVERRIDES = {
+    "top1_accuracy": "Top-1 accuracy",
+    "classifier_continuity": "Classifier continuity",
+}
+
+#: Metrics that are counts rather than scores.
+_COUNT_METRICS = frozenset({"evaluated_observations"})
 
 
 def inject_theme() -> None:
@@ -42,6 +57,8 @@ def sentence_label(name: str) -> str:
     >>> sentence_label("pointwise_accuracy")
     'Pointwise accuracy'
     """
+    if name in _LABEL_OVERRIDES:
+        return _LABEL_OVERRIDES[name]
     words = name.replace("_", " ").strip()
     return words[:1].upper() + words[1:]
 
@@ -49,6 +66,8 @@ def sentence_label(name: str) -> str:
 def _format_value(name: str, value: float) -> str:
     if name in _FRACTION_METRICS:
         return f"{value:.1%}"
+    if name in _COUNT_METRICS:
+        return f"{int(value):,}"
     return f"{value:,.3f}".rstrip("0").rstrip(".")
 
 
