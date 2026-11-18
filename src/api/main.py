@@ -20,6 +20,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 
+from src.data.evaluator import EvaluatorInputError
 from src.data.reader import normalize_trip_id
 
 from .schemas import PredictRequest, PredictResponse, TripList
@@ -67,6 +68,12 @@ def create_app(service: PathSnapService | None = None) -> FastAPI:
         existing = state.get("service")
         if existing is not None:
             return existing
+        evaluator_predictions = os.environ.get("PATHSNAP_EVALUATOR_PREDICTIONS")
+        if evaluator_predictions and not os.environ.get("PATHSNAP_EVALUATION_ROOT"):
+            raise HTTPException(
+                status_code=503,
+                detail="Set PATHSNAP_EVALUATION_ROOT to the raw evaluator trip directory.",
+            )
         try:
             built = PathSnapService(
                 evaluation_root=_default_evaluation_root(),
@@ -76,9 +83,12 @@ def create_app(service: PathSnapService | None = None) -> FastAPI:
                 metadata_path=os.environ.get(
                     "PATHSNAP_MODEL_METADATA", str(DEFAULT_ARTIFACTS / "model_metadata.json")
                 ),
+                evaluator_predictions=evaluator_predictions,
             )
-        except FileNotFoundError as exc:
+        except (FileNotFoundError, EvaluatorInputError) as exc:
             logger.error("Prediction service unavailable: %s", exc)
+            if evaluator_predictions:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
             raise HTTPException(
                 status_code=503, detail="Check the backend dataset root and model artifact paths."
             ) from exc
@@ -124,6 +134,8 @@ def create_app(service: PathSnapService | None = None) -> FastAPI:
             result = service_instance.predict(trip_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except EvaluatorInputError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         return PredictResponse(
             trip_id=result.trip_id,
             status=result.status,
