@@ -15,7 +15,7 @@ import html
 import logging
 
 import streamlit as st
-from streamlit_folium import st_folium
+import streamlit.components.v1 as components
 
 from src.config import ConfigurationError, Settings, get_settings
 from src.ui.api_client import ApiError, PathSnapClient, Prediction
@@ -102,12 +102,11 @@ def _render_map(prediction: Prediction) -> None:
         note("The backend returned no GPS points for this trip.", tone="alert")
         return
 
-    st_folium(
-        build_trip_map(payload),
-        height=_MAP_HEIGHT_PX,
-        use_container_width=True,
-        returned_objects=[],
-    )
+    # The map is rendered as standalone HTML rather than through the component
+    # wrapper: the wrapper sized the iframe to zero height on this Streamlit
+    # version, leaving a blank panel.
+    trip_map = build_trip_map(payload)
+    components.html(trip_map.get_root().render(), height=_MAP_HEIGHT_PX, scrolling=False)
 
 
 def main() -> None:
