@@ -30,3 +30,12 @@ Thumbs.db
 scratch/
 tmp/
 *.bak
+
+# ---- LaTeX build artefacts ----
+*.aux
+*.log
+*.toc
+*.out
+*.fls
+*.fdb_latexmk
+*.synctex.gz
