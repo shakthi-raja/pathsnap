@@ -20,6 +20,8 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 
+from src.data.reader import normalize_trip_id
+
 from .schemas import PredictRequest, PredictResponse, TripList
 from .service import PathSnapService
 
@@ -65,15 +67,21 @@ def create_app(service: PathSnapService | None = None) -> FastAPI:
         existing = state.get("service")
         if existing is not None:
             return existing
-        built = PathSnapService(
-            evaluation_root=_default_evaluation_root(),
-            model_path=os.environ.get(
-                "PATHSNAP_MODEL_PATH", str(DEFAULT_ARTIFACTS / "final_pipeline.joblib")
-            ),
-            metadata_path=os.environ.get(
-                "PATHSNAP_MODEL_METADATA", str(DEFAULT_ARTIFACTS / "model_metadata.json")
-            ),
-        )
+        try:
+            built = PathSnapService(
+                evaluation_root=_default_evaluation_root(),
+                model_path=os.environ.get(
+                    "PATHSNAP_MODEL_PATH", str(DEFAULT_ARTIFACTS / "final_pipeline.joblib")
+                ),
+                metadata_path=os.environ.get(
+                    "PATHSNAP_MODEL_METADATA", str(DEFAULT_ARTIFACTS / "model_metadata.json")
+                ),
+            )
+        except FileNotFoundError as exc:
+            logger.error("Prediction service unavailable: %s", exc)
+            raise HTTPException(
+                status_code=503, detail="Check the backend dataset root and model artifact paths."
+            ) from exc
         state["service"] = built
         return built
 
@@ -107,9 +115,13 @@ def create_app(service: PathSnapService | None = None) -> FastAPI:
 
     @app.post("/predict", response_model=PredictResponse)
     def predict(payload: PredictRequest) -> PredictResponse:
+        try:
+            trip_id = normalize_trip_id(payload.trip_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         service_instance = get_service()
         try:
-            result = service_instance.predict(payload.trip_id)
+            result = service_instance.predict(trip_id)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return PredictResponse(

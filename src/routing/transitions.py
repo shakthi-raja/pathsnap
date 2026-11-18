@@ -55,6 +55,7 @@ class NetworkTravel:
         self._data = adjacency.data
         self._max_link_m = max_link_m
         self._reachable: dict[int, dict[int, float]] = {}
+        self._predecessors: dict[int, dict[int, int]] = {}
 
     def _expand(self, source: int) -> dict[int, float]:
         """Distances from ``source`` to every node within the link limit."""
@@ -64,6 +65,7 @@ class NetworkTravel:
 
         limit = self._max_link_m
         distances = {source: 0.0}
+        predecessors: dict[int, int] = {}
         heap = [(0.0, source)]
         while heap:
             distance, node = heapq.heappop(heap)
@@ -76,8 +78,10 @@ class NetworkTravel:
                 candidate = distance + float(self._data[index])
                 if candidate <= limit and candidate < distances.get(target, np.inf):
                     distances[target] = candidate
+                    predecessors[target] = node
                     heapq.heappush(heap, (candidate, target))
 
+        self._predecessors[source] = predecessors
         self._reachable[source] = distances
         return distances
 
@@ -87,6 +91,20 @@ class NetworkTravel:
             return 0.0
         distance = self._expand(source).get(target)
         return None if distance is None else float(distance)
+
+    def shortest_path(
+        self, source: int, target: int, *, max_distance_m: float
+    ) -> list[int] | None:
+        """Return the directed connector's node positions within the given limit."""
+        distance = self.distance(source, target)
+        if distance is None or distance > max_distance_m:
+            return None
+
+        path = [target]
+        while path[-1] != source:
+            path.append(self._predecessors[source][path[-1]])
+        path.reverse()
+        return path
 
 
 def _travel_distance(

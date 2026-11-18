@@ -148,6 +148,29 @@ python -m streamlit run src/ui/app.py
 
 `127.0.0.1` on Laptop 2 means Laptop 2, not Laptop 1. Use the LAN address.
 
+### Local Windows PowerShell
+
+From the repo root, set `PATHSNAP_DATA_ROOT` to the parent of `train` and
+`student_test` in **both** PowerShell windows. Restart any existing processes
+after changing the environment. By default the API serves `student_test` from
+this root. `PATHSNAP_EVALUATION_ROOT` takes precedence if set.
+
+In the API window:
+
+```powershell
+$env:PATHSNAP_DATA_ROOT = 'C:\path\to\dataset'
+$env:PATHSNAP_HOST = '127.0.0.1'
+& .\.venv\Scripts\python.exe -m src.api.main
+```
+
+In the UI window:
+
+```powershell
+$env:PATHSNAP_DATA_ROOT = 'C:\path\to\dataset'
+$env:PATHSNAP_API_URL = 'http://127.0.0.1:8000'
+& .\.venv\Scripts\python.exe -m streamlit run src/ui/app.py --server.address 127.0.0.1
+```
+
 ## API
 
 | Endpoint | Purpose |
