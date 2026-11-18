@@ -17,13 +17,15 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
+from shapely.ops import substring
 
 from src.data.candidates import CandidateConfig, generate_candidates
 from src.data.features import build_candidate_features
 from src.data.labels import align_reference_route
 from src.data.network import build_road_network
-from src.data.reader import load_trip
+from src.data.reader import load_trip, normalize_trip_id
 from src.routing.decoder import decode_candidates
+from src.routing.reconstruction import reconstruct_route
 from src.routing.transitions import NetworkTravel
 
 from .evaluation import evaluate_prediction
@@ -92,8 +94,6 @@ class PathSnapService:
             for path in self.evaluation_root.iterdir()
             if path.is_dir() and (path / f"{path.name}.track").is_file()
         )
-        if not trip_ids:
-            raise FileNotFoundError(f"No trip folders under {self.evaluation_root}")
         return trip_ids
 
     # -- pipeline ----------------------------------------------------------
@@ -118,6 +118,7 @@ class PathSnapService:
 
     def predict(self, trip_id: str) -> PredictionResult:
         """Run the full pipeline for one trip and score it if reference exists."""
+        trip_id = normalize_trip_id(trip_id)
         started = time.perf_counter()
         warnings: list[str] = []
 
@@ -214,40 +215,23 @@ def _track_points(track, network) -> list[list[float]]:
 
 
 def _polylines(decoded: pd.DataFrame, network, travel) -> list[list[list[float]]]:
-    """Build predicted route pieces, splitting wherever the network breaks.
+    """Render directed route pieces in the API's [latitude, longitude] order."""
+    pieces = reconstruct_route(decoded, network, travel, max_join_m=MAX_POLYLINE_JOIN_M)
+    positions = {arc_id: i for i, arc_id in enumerate(network.arcs["arc_id"])}
+    polylines = []
+    for piece in pieces:
+        coordinates = []
+        for part in piece:
+            geometry = network.geometries[positions[part.arc_id]]
+            clipped = substring(geometry, part.start_m, part.end_m)
+            for point in clipped.coords:
+                if not coordinates or coordinates[-1] != point:
+                    coordinates.append(point)
 
-    Consecutive observations often repeat the same arc, so repeated arcs are
-    collapsed before rendering.
-    """
-    polylines: list[list[list[float]]] = []
-    current: list[list[float]] = []
-    previous_arc: int | None = None
-    previous_to_node: int | None = None
-
-    for row in decoded.itertuples():
-        arc_id = int(row.arc_id)
-        if arc_id == previous_arc:
-            continue
-
-        if previous_to_node is not None and int(row.from_node_id) != previous_to_node:
-            # Start a new piece only when the network cannot join the two arcs
-            # within a short hop, so ordinary multi-arc stretches stay joined.
-            link = travel.distance(int(previous_to_node), int(row.from_node_id))
-            if link is None or link > MAX_POLYLINE_JOIN_M:
-                if len(current) >= 2:
-                    polylines.append(current)
-                current = []
-
-        geometry = network.geometries[arc_id]
-        for x, y in geometry.coords:
+        line = []
+        for x, y in coordinates:
             lon, lat = network.inverse.transform(x, y)
-            point = [float(lat), float(lon)]
-            if not current or current[-1] != point:
-                current.append(point)
-
-        previous_arc = arc_id
-        previous_to_node = int(row.to_node_id)
-
-    if len(current) >= 2:
-        polylines.append(current)
+            line.append([float(lat), float(lon)])
+        if len(line) >= 2:
+            polylines.append(line)
     return polylines

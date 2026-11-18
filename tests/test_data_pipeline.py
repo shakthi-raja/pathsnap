@@ -266,21 +266,32 @@ def test_held_out_training_guard(tmp_path):
     with pytest.raises(ValueError,match='inference-only'): process_trips(root,tmp_path/'output')
     with pytest.raises(ValueError,match='inference-only'): build_training_dataset(root,1)
 
+@pytest.fixture
+def real_training_root():
+    from src.config import ConfigurationError, get_settings
+
+    try:
+        return get_settings().data_root / "train"
+    except ConfigurationError as exc:
+        pytest.skip(f"Raw training data not available: {exc}")
+
+
 @pytest.mark.real
-def test_real_training_inference_schema_and_values():
-    if not Path('data/raw/train/00000001').exists(): pytest.skip('Raw training data not available')
-    training,_=build_training_dataset('data/raw/train',1)
-    inference=build_inference_features('data/raw/train',1)
+def test_real_training_inference_schema_and_values(real_training_root):
+    if not (real_training_root / "00000001").exists():
+        pytest.skip("Raw training trip 00000001 not available")
+    training,_=build_training_dataset(real_training_root,1)
+    inference=build_inference_features(real_training_root,1)
     keys=['trip_id','gps_index','arc_id']
     pd.testing.assert_frame_equal(training[keys+FEATURE_COLUMNS],inference[keys+FEATURE_COLUMNS])
 
 @pytest.mark.real
 @pytest.mark.parametrize('tid',['00000001','00000002','00000003'])
-def test_real_trip_end_to_end(tid):
-    if not (Path('data/raw/train')/tid).exists(): pytest.skip('Raw training data not available')
-    track,nodes,arcs,route=load_trip('data/raw/train',tid)
+def test_real_trip_end_to_end(tid, real_training_root):
+    if not (real_training_root / tid).exists(): pytest.skip(f'Raw training trip {tid} not available')
+    track,nodes,arcs,route=load_trip(real_training_root,tid)
     if tid=='00000001': assert tuple(map(len,[track,nodes,arcs,route]))==(1315,88809,165790,525)
-    frame,alignment=build_training_dataset('data/raw/train',tid)
+    frame,alignment=build_training_dataset(real_training_root,tid)
     assert frame.gps_index.nunique()==len(track)==len(alignment)
     assert not frame.duplicated(['trip_id','gps_index','arc_id']).any()
     assert frame.arc_id.isin(arcs.index).all()
