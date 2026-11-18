@@ -508,9 +508,10 @@ receives reference data: the contract has no field for it.</p>
 </table>
 <figure>
   <img src="figures/ui_live_prediction.png" alt="Interface">
-  <figcaption>The evaluator interface on Laptop 2, served by the real backend rather than the
-  development fixture. Trip 00000000 scores 96.3% pointwise accuracy against 95.2% for the
-  classifier alone, with a 4.4 s round trip.</figcaption>
+  <figcaption>The evaluator interface on Laptop 2 with the reserved partition loaded. Trip
+  00000023 was selected from the ten and scored 99.4% pointwise accuracy against 98.5% for the
+  classifier alone, in 1.3 s. The trip list is discovered from the server, so the ten evaluator
+  trips appear without any change to the interface.</figcaption>
 </figure>
 <figure>
   <img src="figures/api_request_log.png" alt="API log">
