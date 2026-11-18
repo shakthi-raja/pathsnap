@@ -1,0 +1,37 @@
+{
+  "model_name": "HistGradientBoosting (tuned)",
+  "features": [
+    "distance_m",
+    "candidate_rank",
+    "position_fraction",
+    "position_m",
+    "length_m",
+    "road_sin",
+    "road_cos",
+    "movement_m",
+    "heading_sin",
+    "heading_cos",
+    "heading_difference_rad",
+    "dt_s",
+    "speed_mps",
+    "valid_time_gap",
+    "stationary",
+    "zero_length",
+    "gaussian_emission_20m",
+    "log_emission_20m"
+  ],
+  "positive_class": 1,
+  "best_params": {
+    "max_iter": 100,
+    "learning_rate": 0.034292951628939645,
+    "max_leaf_nodes": 57,
+    "min_samples_leaf": 40,
+    "l2_regularization": 0.3470266988650412
+  },
+  "objective": 0.7651492830657115,
+  "n_trials": 10,
+  "cv_n_splits": 3,
+  "test_top1_accuracy": 0.8151069914209644,
+  "sampler": "TPE",
+  "seed": 42
+}
