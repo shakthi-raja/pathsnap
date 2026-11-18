@@ -340,7 +340,7 @@ grouped cross-validation over trips is cross-city validation rather than a rando
 \label{fig:locations}
 \end{figure}
 
-That last finding matters more than it looks. A reference route covering part of a journey cannot
+That last finding matters more than it looks. A reference route covering only part of a drive cannot
 supply a label for observations outside it, and forcing one would teach the model to be wrong with
 confidence. The alignment stage therefore marks each observation as confident or unlabelled, and only
 confident observations are used for supervision.
@@ -583,7 +583,7 @@ Across the ten reserved trips the decoded accuracy averaged \textbf{"""
 
 Trip 00000015 is the outlier at """
             + f"{float(evaluator['trips']['00000015']['metrics']['pointwise_accuracy']) * 100:.1f}"
-            + r"""\%. Its road extract is sparse, 3,225 arcs across a 53 kilometre journey, so long
+            + r"""\%. Its road extract is sparse, 3,225 arcs across a 53 kilometre drive, so long
 stretches repeat a single arc and only 3,832 of 6,854 observations produced a confident reference
 alignment. The result is reported as measured.
 
@@ -740,6 +740,12 @@ undecodable. Pairs beyond two kilometres are set to negative infinity. \\
         ]
         doc.append(
             r"""
+After Viterbi has chosen an arc per observation, a reconstruction pass turns that sequence into
+travelled portions of road. Each chosen arc keeps a start and end offset along its length, so the
+drawn route follows the part of the arc the vehicle used rather than hopping between arc endpoints.
+Pieces split only where the road network cannot connect them, which is where the route pieces in the
+figures come from.
+
 \subsection{Classifier alone against classifier plus decoder}
 
 The same observations, the same alignment and the same scoring rule were used for both paths, so the
@@ -799,15 +805,28 @@ for layers actually drawn. The interactive HTML is committed at
         r"""
 \section{API, UI and deployment}
 
-Laptop 1 runs the FastAPI backend, which holds the model, the decoder and the reference routes.
-Laptop 2 runs the Streamlit interface and reaches the backend over the local network. Ground truth
-never crosses that link: the response contract has no field for the reference route.
+Laptop 1 runs the FastAPI backend and holds the model, the decoder and the reference routes. Laptop
+2 runs the Streamlit interface and reaches the backend over the local network. Ground truth never
+crosses that link: the response contract has no field for the reference route.
+
+The service runs in one of two modes. In trained mode it builds candidates, scores them, decodes a
+route and then scores that route against the reference, so the response carries accuracy, Top-1,
+continuity and candidate miss rate. In evaluator mode it reads candidate probabilities that were
+computed ahead of time and never opens a reference route at all, so the response carries only
+geometry, continuity and runtime. The deployment used for demonstration ran in evaluator mode, and
+that is why the readout in Figure~\ref{fig:ui} shows a single metric. Nothing is hidden: the health
+endpoint names the mode and the response simply omits what was not computed.
+
+The pair was exercised over the shared network with the API on Laptop 1 at \texttt{10.30.201.178:8000}
+and the interface on Laptop 2. A prediction for trip 00000023 returned in 1,196 milliseconds,
+measured at the interface.
 
 \begin{table}[H]
 \centering
 \caption{Public endpoints.}
 \label{tab:api}
-\begin{tabular}{@{}ll@{}}
+\small
+\begin{tabular}{@{}p{0.20\textwidth}p{0.72\textwidth}@{}}
 \toprule
 \textbf{Endpoint} & \textbf{Purpose} \\
 \midrule
@@ -822,18 +841,20 @@ against the reference route held on the server. \\
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.99\textwidth]{figures/ui_live_prediction.png}
-\caption{The evaluator interface on Laptop 2 with the reserved partition loaded. Trip 00000023 was
-selected from the ten shown and scored 99.4 percent pointwise accuracy in 1.3 seconds. The trip list
-is discovered from the server, so the interface required no change when the evaluator data arrived.}
+\includegraphics[width=0.99\textwidth]{figures/ui_lan_prediction.png}
+\caption{The interface on Laptop 2, served by the backend on Laptop 1 over the shared network. The ten
+reserved trips are discovered from the server, so no code changed when the evaluator data arrived.
+Trip 00000023 was selected and its route drawn in 1,196 milliseconds. The evaluator mode reports
+continuity and runtime only, as described above.}
 \label{fig:ui}
 \end{figure}
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.98\textwidth]{figures/api_request_log.png}
-\caption{Request log on Laptop 1 for a prediction, showing the trip, observation count, runtime and
-computed accuracy. The guidelines require this evidence from the machine receiving the requests.}
+\caption{Request log on Laptop 1 for the same prediction. Each line records the trip, the observation
+count and the runtime, and the accuracy field reads \texttt{None} because evaluator mode does not open
+a reference route. The guidelines require this evidence from the machine receiving the requests.}
 \label{fig:apilog}
 \end{figure}
 
