@@ -199,6 +199,17 @@ python tools/render_trip_map.py \
 Produces the Folium evidence the report needs, including the reference route.
 Only valid on training and student-test trips.
 
+## Report
+
+```bash
+python tools/make_report_figures.py   # charts from results/*.csv
+python tools/build_report.py          # renders report/PathSnap_Report.pdf
+```
+
+The builder reads the recorded CSVs and artifact metadata, so a regenerated
+report always matches the run in this repository. No metric in the PDF is typed
+by hand.
+
 ## Tests
 
 ```bash
