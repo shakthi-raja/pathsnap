@@ -10,6 +10,8 @@ __pycache__/
 
 # ---- Local data (never commit the dataset) ----
 data/
+data/raw/
+data/processed/
 *.parquet
 *.feather
 
@@ -21,6 +23,7 @@ data/
 # ---- OS / editor ----
 .DS_Store
 Thumbs.db
+.vscode/
 .vscode/settings.json
 
 # ---- Scratch ----
