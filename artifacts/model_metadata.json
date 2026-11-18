@@ -1,0 +1,42 @@
+{
+    "project": "PathSnap",
+    "model_name": "XGBoost",
+    "features": [
+        "distance_m",
+        "candidate_rank",
+        "position_fraction",
+        "position_m",
+        "length_m",
+        "road_sin",
+        "road_cos",
+        "movement_m",
+        "heading_sin",
+        "heading_cos",
+        "heading_difference_rad",
+        "dt_s",
+        "speed_mps",
+        "valid_time_gap",
+        "stationary",
+        "zero_length",
+        "gaussian_emission_20m",
+        "log_emission_20m"
+    ],
+    "positive_class": 1,
+    "positive_class_meaning": "Correct road candidate",
+    "negative_class": 0,
+    "negative_class_meaning": "Incorrect road candidate",
+    "training_trips": 70,
+    "training_rows": 480258,
+    "hyperparameters": {
+        "n_estimators": 105,
+        "max_depth": 9,
+        "learning_rate": 0.0362919227069805,
+        "subsample": 0.8987566853061946,
+        "colsample_bytree": 0.7935133228268233,
+        "min_child_weight": 6,
+        "reg_lambda": 1.2399967836846095
+    },
+    "optuna_best_macro_f1": 0.849839332734842,
+    "random_state": 42,
+    "prediction_output": "predict_proba"
+}
