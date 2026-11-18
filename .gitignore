@@ -1,11 +1,32 @@
+# ---- Python ----
 .venv/
+venv/
 __pycache__/
-*.pyc
-.env
-.vscode/
+*.py[cod]
+*.egg-info/
 .pytest_cache/
-data/raw/
-data/processed/
-artifacts/
-results/
-*.joblib
+.ruff_cache/
+.ipynb_checkpoints/
+
+# ---- Local data (never commit the dataset) ----
+/data/
+/data/raw/
+/data/processed/
+*.parquet
+*.feather
+
+# ---- Secrets ----
+.env
+.env.*
+*.pem
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.vscode/
+.vscode/settings.json
+
+# ---- Scratch ----
+scratch/
+tmp/
+*.bak

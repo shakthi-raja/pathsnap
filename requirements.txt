@@ -1,0 +1,34 @@
+# core
+numpy
+pandas
+pyarrow
+scipy
+
+# machine learning
+scikit-learn
+optuna
+joblib
+
+# geo + routing
+pyproj
+shapely
+networkx
+
+# backend
+fastapi
+uvicorn[standard]
+pydantic
+requests
+
+# ui + maps
+streamlit
+streamlit-folium
+folium
+
+# plots + report
+matplotlib
+seaborn
+python-docx
+
+# tests
+pytest

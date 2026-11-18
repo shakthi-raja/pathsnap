@@ -1,0 +1,333 @@
+/*
+ * PathSnap interface.
+ *
+ * The map is the subject, so the chrome stays quiet: paper and graphite,
+ * hairlines instead of cards, one green that only ever means "the route".
+ * Every colour and face resolves through the tokens below.
+ */
+
+:root {
+  --ink: #14171a;
+  --ink-soft: #3d423e;
+  --muted: #6b6f6a;
+  --paper: #fbfbf9;
+  --paper-sunk: #f2f2ee;
+  --rule: #dcddd7;
+  --route: #2f6b4f;
+  --route-wash: #e7efe9;
+  --alert: #a63d2a;
+  --alert-wash: #f7ece9;
+  --caution: #8a6416;
+  --caution-wash: #fbf4e3;
+
+  --radius: 2px;
+  --rail: 312px;
+  --gap: 1.25rem;
+
+  --face-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --face-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo,
+    Consolas, monospace;
+
+  --step--1: 0.8125rem;
+  --step-0: 0.9375rem;
+  --step-1: 1.0625rem;
+  --step-2: 1.375rem;
+  --step-3: 1.75rem;
+}
+
+/* --- frame ------------------------------------------------------------ */
+
+html,
+body,
+[data-testid="stAppViewContainer"] {
+  overflow-x: clip;
+}
+
+[data-testid="stAppViewContainer"] {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--face-sans);
+}
+
+[data-testid="stHeader"] {
+  background: transparent;
+  height: 0;
+}
+
+#MainMenu,
+footer,
+[data-testid="stToolbar"],
+[data-testid="stDecoration"],
+[data-testid="stStatusWidget"] {
+  display: none;
+}
+
+[data-testid="stMainBlockContainer"],
+.block-container {
+  padding: 1.25rem 2rem 3rem;
+  max-width: none;
+}
+
+/* --- masthead --------------------------------------------------------- */
+
+.ps-mast {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: var(--gap);
+}
+
+.ps-word {
+  font-size: var(--step-3);
+  font-weight: 650;
+  letter-spacing: -0.024em;
+  line-height: 1;
+  color: var(--ink);
+}
+
+.ps-sub {
+  margin: 0.45rem 0 0;
+  font-size: var(--step-0);
+  color: var(--muted);
+  max-width: 46ch;
+}
+
+.ps-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: var(--step--1);
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.ps-pip {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.ps-pip[data-on="yes"] {
+  background: var(--route);
+}
+
+.ps-pip[data-on="no"] {
+  background: var(--alert);
+}
+
+/* --- rail ------------------------------------------------------------- */
+
+[data-testid="stSidebar"] {
+  background: var(--paper-sunk);
+  border-right: 1px solid var(--rule);
+  width: var(--rail);
+  min-width: var(--rail);
+}
+
+[data-testid="stSidebar"] [data-testid="stSidebarContent"] {
+  padding: 1.5rem 1.25rem;
+}
+
+.ps-label {
+  display: block;
+  font-size: var(--step--1);
+  color: var(--muted);
+  margin-bottom: 0.4rem;
+}
+
+.ps-rule {
+  height: 1px;
+  background: var(--rule);
+  margin: 1.35rem 0;
+}
+
+/* --- controls --------------------------------------------------------- */
+
+.stButton > button {
+  width: 100%;
+  border-radius: var(--radius);
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--face-sans);
+  font-size: var(--step-0);
+  font-weight: 600;
+  padding: 0.6rem 1rem;
+  transition: background-color 160ms ease, border-color 160ms ease;
+}
+
+.stButton > button:hover {
+  background: var(--ink-soft);
+  border-color: var(--ink-soft);
+  color: var(--paper);
+}
+
+.stButton > button:focus-visible {
+  outline: 2px solid var(--route);
+  outline-offset: 2px;
+}
+
+.stButton > button:disabled {
+  background: var(--paper-sunk);
+  border-color: var(--rule);
+  color: var(--muted);
+}
+
+.stButton > button[kind="secondary"],
+.stButton > button[data-testid="stBaseButton-secondary"] {
+  background: transparent;
+  border-color: var(--rule);
+  color: var(--ink-soft);
+  font-weight: 500;
+}
+
+.stButton > button[kind="secondary"]:hover,
+.stButton > button[data-testid="stBaseButton-secondary"]:hover {
+  background: transparent;
+  border-color: var(--ink-soft);
+  color: var(--ink);
+}
+
+[data-baseweb="select"] > div {
+  border-radius: var(--radius);
+  border-color: var(--rule);
+  background: #fff;
+  font-family: var(--face-mono);
+  font-size: var(--step-0);
+  min-height: 2.6rem;
+}
+
+[data-baseweb="select"] > div:focus-within {
+  border-color: var(--route);
+  box-shadow: 0 0 0 2px var(--route-wash);
+}
+
+/* --- readout strip ---------------------------------------------------- */
+
+.ps-strip {
+  display: flex;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: var(--gap);
+}
+
+.ps-cell {
+  flex: 1 1 0;
+  min-width: 9rem;
+  padding: 0.85rem 1.1rem 0.95rem;
+  border-left: 1px solid var(--rule);
+}
+
+.ps-cell:first-child {
+  border-left: 0;
+  padding-left: 0;
+}
+
+.ps-cell span {
+  display: block;
+  font-size: var(--step--1);
+  color: var(--muted);
+  margin-bottom: 0.3rem;
+}
+
+.ps-cell strong {
+  font-family: var(--face-mono);
+  font-size: var(--step-2);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  overflow-wrap: break-word;
+  min-width: 0;
+}
+
+.ps-cell[data-empty="yes"] strong {
+  font-family: var(--face-sans);
+  font-size: var(--step-1);
+  color: var(--muted);
+}
+
+/* --- states ----------------------------------------------------------- */
+
+.ps-note {
+  border-left: 2px solid var(--rule);
+  padding: 0.15rem 0 0.15rem 0.85rem;
+  margin: 1rem 0;
+  font-size: var(--step-0);
+  color: var(--ink-soft);
+  max-width: 76ch;
+}
+
+.ps-note[data-tone="alert"] {
+  border-left-color: var(--alert);
+  background: var(--alert-wash);
+  padding: 0.7rem 0.9rem;
+  color: var(--ink);
+}
+
+.ps-note[data-tone="caution"] {
+  border-left-color: var(--caution);
+  background: var(--caution-wash);
+  padding: 0.7rem 0.9rem;
+  color: var(--ink);
+}
+
+.ps-note[data-tone="quiet"] {
+  border-left-color: var(--route);
+  background: var(--route-wash);
+  padding: 0.7rem 0.9rem;
+}
+
+.ps-note code {
+  font-family: var(--face-mono);
+  font-size: 0.92em;
+}
+
+.ps-empty {
+  border: 1px dashed var(--rule);
+  border-radius: var(--radius);
+  min-height: 460px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 2rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--step-0);
+}
+
+.ps-empty strong {
+  display: block;
+  color: var(--ink);
+  font-size: var(--step-1);
+  font-weight: 600;
+  margin-bottom: 0.4rem;
+}
+
+/* --- map -------------------------------------------------------------- */
+
+[data-testid="stCustomComponentV1"] iframe {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  display: block;
+}
+
+/* --- motion ----------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
