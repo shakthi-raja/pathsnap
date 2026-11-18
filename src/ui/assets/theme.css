@@ -57,10 +57,22 @@ body,
 
 #MainMenu,
 footer,
-[data-testid="stToolbar"],
 [data-testid="stDecoration"],
 [data-testid="stStatusWidget"] {
   display: none;
+}
+
+/* The sidebar reopen control lives inside the toolbar, so the toolbar itself
+   has to stay in the render tree. Only its deploy and menu buttons go. */
+[data-testid="stToolbar"] {
+  background: transparent;
+  height: auto;
+}
+
+[data-testid="stAppDeployButton"],
+[data-testid="stMainMenu"],
+[data-testid="baseButton-header"] {
+  display: none !important;
 }
 
 [data-testid="stMainBlockContainer"],
@@ -330,4 +342,60 @@ footer,
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
   }
+}
+
+/* --- collapsed sidebar control ---------------------------------------- */
+/* Streamlit renders the reopen control with a zero-sized box, so once the
+   rail is collapsed there is nothing to click. Give it a real target. */
+[data-testid="stExpandSidebarButton"] {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  position: fixed !important;
+  top: 0.75rem !important;
+  left: 0.75rem !important;
+  width: 2.35rem !important;
+  height: 2.35rem !important;
+  min-width: 2.35rem !important;
+  min-height: 2.35rem !important;
+  align-items: center;
+  justify-content: center;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  z-index: 1000000;
+  pointer-events: auto !important;
+  box-shadow: 0 1px 3px rgba(20, 23, 26, 0.08);
+}
+
+[data-testid="stExpandSidebarButton"] button,
+[data-testid="stExpandSidebarButton"] .stBaseButton-header,
+[data-testid="stExpandSidebarButton"] [data-testid="stBaseButton-headerNoPadding"],
+[data-testid="stExpandSidebarButton"] [data-testid="stBaseButton-header"] {
+  display: inline-flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 1.5rem !important;
+  min-height: 1.5rem !important;
+  padding: 0 !important;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink) !important;
+  background: transparent !important;
+  border: 0 !important;
+  pointer-events: auto !important;
+}
+
+[data-testid="stExpandSidebarButton"] svg {
+  width: 1.05rem !important;
+  height: 1.05rem !important;
+  color: var(--ink) !important;
+  fill: var(--ink) !important;
+}
+
+[data-testid="stExpandSidebarButton"]:hover {
+  border-color: var(--ink-soft);
+  box-shadow: 0 2px 5px rgba(20, 23, 26, 0.14);
 }
