@@ -1,341 +1,325 @@
+"""Train and compare candidate classifiers, then export the chosen pipeline.
 
+Five families are compared with grouped cross-validation over trips, which is
+also cross-city validation here: every trip in the dataset sits in a different
+city. Selection uses observation-level Top-1 rather than row accuracy, because
+most candidate rows are negatives and row accuracy flatters a lazy model.
+
+Usage::
+
+    python -m src.ml.train_models
+    python -m src.ml.train_models --max-trips 8      # quick smoke test
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import time
 from pathlib import Path
 
+import joblib
+import numpy as np
 import pandas as pd
-
+from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import make_pipeline
-
-from sklearn.naive_bayes import GaussianNB
 from sklearn.linear_model import LogisticRegression
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import (
-    RandomForestClassifier,
-    HistGradientBoostingClassifier,
-)
-
-from sklearn.model_selection import GroupKFold
 from sklearn.metrics import f1_score, log_loss
+from sklearn.model_selection import GroupKFold
+from sklearn.naive_bayes import GaussianNB
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.tree import DecisionTreeClassifier
 
-
-# --------------------------------------------------
-# 1. PROJECT CONFIGURATION
-# --------------------------------------------------
+from src.config import get_settings
+from src.data.features import FEATURE_COLUMNS
+from src.ml.dataset import model_frame
+from src.ml.evaluate import calculate_top1_accuracy
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
-DATA_PATH = PROJECT_ROOT / "data" / "processed" / "train_candidates.parquet"
-
+# The dataset lives outside the repository, so processed tables sit beside the
+# raw partitions rather than inside the working tree.
+PROCESSED_DIR = get_settings().data_root.parent / "processed"
 RESULTS_DIR = PROJECT_ROOT / "results"
-
-VERIFIED_STATUS = "verified"
-
-FEATURES = [
-    "distance_m",
-    "heading_diff_deg",
-    "speed_mps",
-    "dt_s",
-    "candidate_rank",
-]
+ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
 
 RANDOM_STATE = 42
 N_SPLITS = 5
 
 
-# --------------------------------------------------
-# 2. LOAD AND VALIDATE DATA
-# --------------------------------------------------
+def build_models() -> dict[str, object]:
+    """Return the five candidates, one per algorithm family.
 
-def load_training_data():
-
-    if not DATA_PATH.exists():
-        raise FileNotFoundError(
-            f"Training dataset not found: {DATA_PATH}\n"
-            "Wait for Person 1 to provide train_candidates.parquet."
-        )
-
-    print("Loading training dataset...")
-
-    data = pd.read_parquet(DATA_PATH)
-
-    required_columns = (
-        FEATURES
-        + ["trip_id", "label", "label_status"]
-    )
-
-    missing = [
-        col for col in required_columns
-        if col not in data.columns
-    ]
-
-    if missing:
-        raise ValueError(
-            f"Dataset is missing columns: {missing}"
-        )
-
-    print("\nDataset shape:", data.shape)
-
-    print("\nAvailable label statuses:")
-    print(data["label_status"].value_counts(dropna=False))
-
-    # Keep only verified labels.
-    data = data[
-        data["label_status"] == VERIFIED_STATUS
-    ].copy()
-
-    if data.empty:
-        raise ValueError(
-            f"No rows found with label_status = "
-            f"'{VERIFIED_STATUS}'. Confirm the label convention "
-            "with Person 1."
-        )
-
-    # Validate labels.
-    if data["label"].isnull().any():
-        raise ValueError("Verified rows contain missing labels.")
-
-    if not data["label"].isin([0, 1]).all():
-        raise ValueError("Labels must contain only 0 and 1.")
-
-    if data["trip_id"].isnull().any():
-        raise ValueError("Some rows have missing trip IDs.")
-
-    if data["trip_id"].nunique() < N_SPLITS:
-        raise ValueError(
-            "Not enough unique trips for 5-fold GroupKFold."
-        )
-
-    if data["label"].nunique() != 2:
-        raise ValueError(
-            "Training data must contain both classes: 0 and 1."
-        )
-
-    print("\nVerified training rows:", len(data))
-    print("Unique trips:", data["trip_id"].nunique())
-    print("\nLabel distribution:")
-    print(data["label"].value_counts())
-
-    return data
-
-
-# --------------------------------------------------
-# 3. DEFINE THE FIVE ML MODELS
-# --------------------------------------------------
-
-def get_models():
-
-    models = {
-
+    Every preprocessing step lives inside the pipeline so it is fitted on the
+    training fold only. Fitting an imputer on the full dataset before splitting
+    is one of the quietest ways to leak validation information.
+    """
+    return {
         "GaussianNB": make_pipeline(
             SimpleImputer(strategy="median"),
             StandardScaler(),
             GaussianNB(),
         ),
-
         "LogisticRegression": make_pipeline(
             SimpleImputer(strategy="median"),
             StandardScaler(),
-            LogisticRegression(
-                max_iter=1000,
-                random_state=RANDOM_STATE,
-            ),
+            LogisticRegression(max_iter=1000, random_state=RANDOM_STATE),
         ),
-
         "DecisionTree": make_pipeline(
             SimpleImputer(strategy="median"),
-            DecisionTreeClassifier(
-                random_state=RANDOM_STATE,
-            ),
+            DecisionTreeClassifier(max_depth=18, random_state=RANDOM_STATE),
         ),
-
         "RandomForest": make_pipeline(
             SimpleImputer(strategy="median"),
             RandomForestClassifier(
-                n_estimators=150,
+                n_estimators=80,
+                min_samples_leaf=2,
                 n_jobs=-1,
                 random_state=RANDOM_STATE,
             ),
         ),
-
         "HistGradientBoosting": make_pipeline(
             SimpleImputer(strategy="median"),
             HistGradientBoostingClassifier(
+                max_iter=200,
+                learning_rate=0.1,
                 random_state=RANDOM_STATE,
             ),
         ),
     }
 
-    return models
+
+def _positive_scores(model, features: pd.DataFrame) -> np.ndarray:
+    """Probability of the positive class, whatever column sklearn chose."""
+    probabilities = model.predict_proba(features)
+    classes = list(model.classes_)
+    return probabilities[:, classes.index(1)]
 
 
-# --------------------------------------------------
-# 4. TRAIN AND EVALUATE USING GROUPKFOLD
-# --------------------------------------------------
+def _top1(model, frame: pd.DataFrame, features: pd.DataFrame) -> dict[str, float | None]:
+    """Observation-level Top-1 for one fitted model."""
+    scored = frame[["trip_id", "obs_idx", "arc_id", "label"]].copy()
+    scored["p_positive"] = _positive_scores(model, features)
+    return calculate_top1_accuracy(scored)
 
-def train_and_compare(data):
 
-    X = data[FEATURES].copy()
-    y = data["label"].astype(int)
-    groups = data["trip_id"].astype(str)
+def _fold_metrics(
+    model, train_frame: pd.DataFrame, validation_frame: pd.DataFrame
+) -> dict[str, float | None]:
+    """Score one fitted model on one held-out fold."""
+    features = validation_frame[FEATURE_COLUMNS].replace([np.inf, -np.inf], np.nan)
+    target = validation_frame["label"].to_numpy()
+    probabilities = model.predict_proba(features)
+    predictions = model.predict(features)
 
-    cv = GroupKFold(n_splits=N_SPLITS)
+    result = {
+        "macro_f1": float(f1_score(target, predictions, average="macro", zero_division=0)),
+        "log_loss": float(log_loss(target, probabilities, labels=list(model.classes_))),
+        "accuracy": float((predictions == target).mean()),
+    }
+    result.update(_top1(model, validation_frame, features))
+    return result
 
-    models = get_models()
 
-    fold_results = []
+def cross_validate(train: pd.DataFrame, models: dict[str, object]) -> pd.DataFrame:
+    """Run grouped cross-validation and return one row per model and fold."""
+    target = train["label"]
+    groups = train["trip_id"]
 
-    print("\nStarting model comparison...\n")
+    splitter = GroupKFold(n_splits=N_SPLITS)
+    rows: list[dict[str, object]] = []
 
-    for model_name, model in models.items():
-
-        print(f"Training {model_name}...")
-
-        for fold, (train_idx, val_idx) in enumerate(
-            cv.split(X, y, groups),
-            start=1,
+    for name, model in models.items():
+        for fold, (train_idx, valid_idx) in enumerate(
+            splitter.split(train, target, groups), start=1
         ):
-
-            X_train = X.iloc[train_idx]
-            X_val = X.iloc[val_idx]
-
-            y_train = y.iloc[train_idx]
-            y_val = y.iloc[val_idx]
-
-            # Every fold must train on both classes.
-            if y_train.nunique() != 2:
-                raise ValueError(
-                    f"{model_name}, fold {fold}: "
-                    "training fold does not contain both classes."
-                )
-
-            # Train a fresh model for this fold.
-            model.fit(X_train, y_train)
-
-            predictions = model.predict(X_val)
-
-            probabilities = model.predict_proba(X_val)
-
-            # Find probability column corresponding to class 1.
-            classes = model.classes_.tolist()
-
-            if 0 not in classes or 1 not in classes:
-                raise ValueError(
-                    f"{model_name}, fold {fold}: "
-                    "model did not learn both classes."
-                )
-
-            positive_index = classes.index(1)
-
-            positive_probabilities = probabilities[
-                :, positive_index
-            ]
-
-            # Calculate evaluation metrics.
-            macro_f1 = f1_score(
-                y_val,
-                predictions,
-                average="macro",
-                zero_division=0,
+            fit_frame = train.iloc[train_idx]
+            validation_frame = train.iloc[valid_idx]
+            started = time.perf_counter()
+            model.fit(
+                fit_frame[FEATURE_COLUMNS].replace([np.inf, -np.inf], np.nan),
+                fit_frame["label"],
             )
+            elapsed = time.perf_counter() - started
 
-            loss = log_loss(
-                y_val,
-                probabilities,
-                labels=model.classes_,
+            metrics = _fold_metrics(model, fit_frame, validation_frame)
+            rows.append(
+                {
+                    "model": name,
+                    "fold": fold,
+                    "train_seconds": round(elapsed, 2),
+                    "train_rows": len(train_idx),
+                    "validation_rows": len(valid_idx),
+                    "train_trips": groups.iloc[train_idx].nunique(),
+                    "validation_trips": groups.iloc[valid_idx].nunique(),
+                    **metrics,
+                }
             )
-
-            accuracy = (predictions == y_val).mean()
-
-            fold_results.append({
-
-                "model": model_name,
-                "fold": fold,
-                "macro_f1": macro_f1,
-                "log_loss": loss,
-                "accuracy": accuracy,
-                "train_rows": len(train_idx),
-                "validation_rows": len(val_idx),
-                "train_trips": groups.iloc[train_idx].nunique(),
-                "validation_trips": groups.iloc[val_idx].nunique(),
-
-            })
-
             print(
-                f"  Fold {fold}: "
-                f"Macro F1 = {macro_f1:.4f}, "
-                f"Log Loss = {loss:.4f}"
+                f"  {name:<22} fold {fold}  macro F1 {metrics['macro_f1']:.4f}  "
+                f"top-1 {metrics['top1_accuracy']:.4f}",
+                flush=True,
             )
+    return pd.DataFrame(rows)
 
-    return pd.DataFrame(fold_results)
+
+def evaluate_student_test(
+    models: dict[str, object], train: pd.DataFrame, test: pd.DataFrame
+) -> pd.DataFrame:
+    """Fit each model on the whole training partition and score student-test.
+
+    The student-test partition is used for comparison only. Nothing here feeds
+    back into model choice or hyperparameters.
+    """
+    rows: list[dict[str, object]] = []
+    train_features = train[FEATURE_COLUMNS].replace([np.inf, -np.inf], np.nan)
+
+    for name, model in models.items():
+        started = time.perf_counter()
+        model.fit(train_features, train["label"])
+        fit_seconds = time.perf_counter() - started
+
+        inference_started = time.perf_counter()
+        metrics = _fold_metrics(model, train, test)
+        inference_ms = (time.perf_counter() - inference_started) * 1000.0
+
+        rows.append(
+            {
+                "model": name,
+                "student_test_rows": len(test),
+                "fit_seconds": round(fit_seconds, 2),
+                "inference_ms": round(inference_ms, 1),
+                **{f"test_{key}": value for key, value in metrics.items()},
+            }
+        )
+        print(
+            f"  {name:<22} test macro F1 {metrics['macro_f1']:.4f}  "
+            f"top-1 {metrics['top1_accuracy']:.4f}",
+            flush=True,
+        )
+    return pd.DataFrame(rows)
 
 
-# --------------------------------------------------
-# 5. SAVE RESULTS
-# --------------------------------------------------
+def summarise(folds: pd.DataFrame, student_test: pd.DataFrame) -> pd.DataFrame:
+    """Collapse the fold table and join the student-test scores."""
+    aggregated = (
+        folds.groupby("model")
+        .agg(
+            cv_macro_f1_mean=("macro_f1", "mean"),
+            cv_macro_f1_std=("macro_f1", "std"),
+            cv_log_loss_mean=("log_loss", "mean"),
+            cv_accuracy_mean=("accuracy", "mean"),
+            cv_top1_mean=("top1_accuracy", "mean"),
+            cv_top1_std=("top1_accuracy", "std"),
+            cv_train_seconds_mean=("train_seconds", "mean"),
+        )
+        .reset_index()
+    )
+    aggregated = aggregated.merge(
+        student_test[
+            [
+                "model",
+                "test_macro_f1",
+                "test_log_loss",
+                "test_accuracy",
+                "test_top1_accuracy",
+                "inference_ms",
+            ]
+        ],
+        on="model",
+        how="left",
+    )
+    return aggregated.sort_values("cv_top1_mean", ascending=False).reset_index(drop=True)
 
-def save_results(fold_results):
+
+#: Two models within this much cross-validated Top-1 are treated as tied.
+TIE_TOLERANCE = 0.01
+
+
+def select_best(comparison: pd.DataFrame) -> str:
+    """Pick by cross-validated Top-1, with log loss as the tie-breaker.
+
+    Top-1 matches the task: one road per observation. Models within
+    ``TIE_TOLERANCE`` of the best are treated as equivalent on accuracy and the
+    one with the lower log loss wins, because the decoder consumes
+    probabilities rather than hard decisions.
+    """
+    best_top1 = comparison["cv_top1_mean"].max()
+    contenders = comparison[comparison["cv_top1_mean"] >= best_top1 - TIE_TOLERANCE]
+    ranked = contenders.sort_values("cv_log_loss_mean", ascending=True)
+    return str(ranked.iloc[0]["model"])
+
+
+def export_model(model, name: str, comparison: pd.DataFrame) -> None:
+    """Persist the chosen pipeline and the metadata the API needs."""
+    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+    joblib.dump(model, ARTIFACTS_DIR / "final_pipeline.joblib")
+
+    row = comparison.loc[comparison["model"] == name].iloc[0]
+    metadata = {
+        "model_name": name,
+        "features": FEATURE_COLUMNS,
+        "positive_class": 1,
+        "description": "candidate arc is the reference match",
+        "training_partition": "80 training trips",
+        "selection_metric": "cross-validated observation-level Top-1",
+        "random_seed": RANDOM_STATE,
+        "cv_n_splits": N_SPLITS,
+        "cv_top1_mean": float(row["cv_top1_mean"]),
+        "cv_macro_f1_mean": float(row["cv_macro_f1_mean"]),
+        "test_top1_accuracy": float(row["test_top1_accuracy"]),
+        "test_macro_f1": float(row["test_macro_f1"]),
+        "test_log_loss": float(row["test_log_loss"]),
+    }
+    (ARTIFACTS_DIR / "model_metadata.json").write_text(
+        json.dumps(metadata, indent=2), encoding="utf-8"
+    )
+    print(f"\nExported {name} to {ARTIFACTS_DIR}")
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--max-trips", type=int, default=None, help="Limit training trips for a smoke test"
+    )
+    args = parser.parse_args(argv)
+
+    print("Loading candidate tables...", flush=True)
+    train = model_frame(PROCESSED_DIR / "train")
+    test = model_frame(PROCESSED_DIR / "student_test")
+
+    if args.max_trips:
+        keep = train["trip_id"].unique()[: args.max_trips]
+        train = train.loc[train["trip_id"].isin(keep)]
+
+    print(
+        f"Train: {len(train):,} rows across {train['trip_id'].nunique()} trips\n"
+        f"Student test: {len(test):,} rows across {test['trip_id'].nunique()} trips\n"
+        f"Positive rate: {train['label'].mean():.3f}",
+        flush=True,
+    )
+
+    models = build_models()
+
+    print("\nCross-validating...", flush=True)
+    folds = cross_validate(train, models)
+
+    print("\nEvaluating on student test...", flush=True)
+    student_test = evaluate_student_test(models, train, test)
+
+    comparison = summarise(folds, student_test)
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Save individual fold results.
-    fold_path = RESULTS_DIR / "cv_fold_results.csv"
-
-    fold_results.to_csv(fold_path, index=False)
-
-    # Calculate average performance for each model.
-    comparison = (
-        fold_results
-        .groupby("model")
-        .agg({
-            "macro_f1": ["mean", "std"],
-            "log_loss": ["mean", "std"],
-            "accuracy": ["mean", "std"],
-        })
-    )
-
-    comparison.columns = [
-        "_".join(column)
-        for column in comparison.columns
-    ]
-
-    comparison = comparison.reset_index()
-
-    comparison = comparison.sort_values(
-        "macro_f1_mean",
-        ascending=False,
-    )
-
-    comparison_path = RESULTS_DIR / "model_comparison.csv"
-
-    comparison.to_csv(comparison_path, index=False)
+    folds.to_csv(RESULTS_DIR / "cv_fold_results.csv", index=False)
+    student_test.to_csv(RESULTS_DIR / "student_test_results.csv", index=False)
+    comparison.to_csv(RESULTS_DIR / "model_comparison.csv", index=False)
 
     print("\nMODEL COMPARISON")
-    print("=" * 60)
     print(comparison.to_string(index=False))
 
-    print("\nResults saved:")
-    print(fold_path)
-    print(comparison_path)
-
-
-# --------------------------------------------------
-# 6. MAIN PROGRAM
-# --------------------------------------------------
-
-def main():
-
-    print("=" * 60)
-    print("PATHSNAP - ML MODEL TRAINING")
-    print("=" * 60)
-
-    data = load_training_data()
-
-    results = train_and_compare(data)
-
-    save_results(results)
-
-    print("\nModel comparison completed successfully!")
+    chosen = select_best(comparison)
+    print(f"\nSelected: {chosen}")
+    export_model(models[chosen], chosen, comparison)
 
 
 if __name__ == "__main__":

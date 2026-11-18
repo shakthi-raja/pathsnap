@@ -1,4 +1,3 @@
-
 import time
 
 import numpy as np
@@ -39,15 +38,9 @@ def calculate_classification_metrics(y_true, y_pred, y_proba=None):
 
     metrics = {
         "accuracy": accuracy_score(y_true, y_pred),
-        "precision": precision_score(
-            y_true, y_pred, zero_division=0
-        ),
-        "recall": recall_score(
-            y_true, y_pred, zero_division=0
-        ),
-        "macro_f1": f1_score(
-            y_true, y_pred, average="macro", zero_division=0
-        ),
+        "precision": precision_score(y_true, y_pred, zero_division=0),
+        "recall": recall_score(y_true, y_pred, zero_division=0),
+        "macro_f1": f1_score(y_true, y_pred, average="macro", zero_division=0),
         "log_loss": None,
     }
 
@@ -132,9 +125,7 @@ def calculate_top1_accuracy(scored):
     best_candidates = scored.loc[best_indices]
 
     # Keep only observations with exactly one verified positive.
-    best_candidates = best_candidates.set_index(
-        ["trip_id", "obs_idx"]
-    )
+    best_candidates = best_candidates.set_index(["trip_id", "obs_idx"])
 
     best_candidates = best_candidates.loc[valid_groups]
 
@@ -144,9 +135,7 @@ def calculate_top1_accuracy(scored):
     evaluated_groups = len(valid_groups)
 
     return {
-        "top1_accuracy": (
-            float(np.mean(correct)) if evaluated_groups else None
-        ),
+        "top1_accuracy": (float(np.mean(correct)) if evaluated_groups else None),
         "total_groups": total_groups,
         "evaluated_groups": evaluated_groups,
         "excluded_groups": total_groups - evaluated_groups,

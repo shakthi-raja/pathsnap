@@ -1,4 +1,3 @@
-
 import json
 from pathlib import Path
 
@@ -96,10 +95,6 @@ def train_final_model(best_params=None):
 
 
 if __name__ == "__main__":
-
     print("PathSnap model export module")
 
-    print(
-        "This module is ready. "
-        "Run final training after model comparison and tuning."
-    )
+    print("This module is ready. Run final training after model comparison and tuning.")
