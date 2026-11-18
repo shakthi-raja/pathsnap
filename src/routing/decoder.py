@@ -102,32 +102,48 @@ def decode_candidates(
     scored = candidates.loc[:, list(_STATE_COLUMNS)].copy()
     scored["p_positive"] = np.asarray(probabilities, dtype=float)
 
-    decoded_rows: list[dict[str, object]] = []
-    baseline_rows: list[dict[str, object]] = []
+    # Work on plain arrays rather than iterating the frame: a long trip holds
+    # tens of thousands of candidate rows and pandas row access dominates the
+    # runtime otherwise.
+    columns = {name: scored[name].to_numpy() for name in _STATE_COLUMNS}
+    observations = columns["gps_index"]
+    scores = scored["p_positive"].to_numpy()
 
-    observation_ids = scored["gps_index"].to_numpy()
-    boundaries = np.flatnonzero(np.diff(observation_ids)) + 1
-    groups = np.split(np.arange(len(scored)), boundaries)
+    boundaries = np.flatnonzero(np.diff(observations)) + 1
+    groups = np.split(np.arange(len(observations)), boundaries)
+
+    def build_states(positions: np.ndarray) -> list[CandidateState]:
+        return [
+            CandidateState(
+                arc_id=int(columns["arc_id"][i]),
+                from_node=int(columns["from_node_id"][i]),
+                to_node=int(columns["to_node_id"][i]),
+                length_m=float(columns["length_m"][i]),
+                position_m=float(columns["position_m"][i]),
+                x=float(columns["projected_x"][i]),
+                y=float(columns["projected_y"][i]),
+            )
+            for i in positions
+        ]
 
     previous_states: list[CandidateState] | None = None
     transition_matrices: list[np.ndarray] = []
     emissions: list[np.ndarray] = []
-    group_slices: list[np.ndarray] = []
 
     for positions in groups:
-        block = scored.iloc[positions]
-        states = [_state(row) for _, row in block.iterrows()]
-        emissions.append(emission_log_probs(block["p_positive"].to_numpy()))
-        group_slices.append(positions)
+        states = build_states(positions)
+        emissions.append(emission_log_probs(scores[positions]))
 
         if previous_states is not None:
-            first = block.iloc[0]
+            first = positions[0]
+            movement = float(columns["movement_m"][first])
+            delta = float(columns["dt_s"][first])
             transition_matrices.append(
                 transition_log_scores(
                     previous_states,
                     states,
-                    gps_m=float(first["movement_m"]) if np.isfinite(first["movement_m"]) else 0.0,
-                    dt_s=float(first["dt_s"]) if np.isfinite(first["dt_s"]) else 0.0,
+                    gps_m=movement if np.isfinite(movement) else 0.0,
+                    dt_s=delta if np.isfinite(delta) else 0.0,
                     travel=travel,
                     max_speed_mps=max_speed_mps,
                 )
@@ -139,30 +155,30 @@ def decode_candidates(
     except ValueError:
         chosen = [int(np.argmax(emission)) for emission in emissions]
 
-    for positions, index, emission in zip(group_slices, chosen, emissions, strict=True):
-        block = scored.iloc[positions]
-        best = block.iloc[index]
-        classifier_best = block.iloc[int(np.argmax(emission))]
-
+    decoded_rows: list[dict[str, object]] = []
+    baseline_rows: list[dict[str, object]] = []
+    for positions, index, emission in zip(groups, chosen, emissions, strict=True):
+        best = positions[index]
+        baseline = positions[int(np.argmax(emission))]
         decoded_rows.append(
             {
-                "gps_index": int(best["gps_index"]),
-                "arc_id": int(best["arc_id"]),
-                "p_positive": float(best["p_positive"]),
-                "from_node_id": int(best["from_node_id"]),
-                "to_node_id": int(best["to_node_id"]),
-                "length_m": float(best["length_m"]),
-                "position_m": float(best["position_m"]),
-                "projected_x": float(best["projected_x"]),
-                "projected_y": float(best["projected_y"]),
-                "candidate_count": int(len(block)),
+                "gps_index": int(columns["gps_index"][best]),
+                "arc_id": int(columns["arc_id"][best]),
+                "p_positive": float(scores[best]),
+                "from_node_id": int(columns["from_node_id"][best]),
+                "to_node_id": int(columns["to_node_id"][best]),
+                "length_m": float(columns["length_m"][best]),
+                "position_m": float(columns["position_m"][best]),
+                "projected_x": float(columns["projected_x"][best]),
+                "projected_y": float(columns["projected_y"][best]),
+                "candidate_count": int(len(positions)),
             }
         )
         baseline_rows.append(
             {
-                "gps_index": int(classifier_best["gps_index"]),
-                "arc_id": int(classifier_best["arc_id"]),
-                "p_positive": float(classifier_best["p_positive"]),
+                "gps_index": int(columns["gps_index"][baseline]),
+                "arc_id": int(columns["arc_id"][baseline]),
+                "p_positive": float(scores[baseline]),
             }
         )
 

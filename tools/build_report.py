@@ -80,6 +80,7 @@ def build_html() -> str:
         else None
     )
     api = _read_json(RESULTS / "api_evaluation.json", {})
+    evaluator = _read_json(RESULTS / "evaluator_test_results.json")
 
     parts: list[str] = []
     add = parts.append
@@ -335,6 +336,46 @@ so there is no evidence of overfitting to the training cities.</p>
 </figure>
 """
     )
+
+    # --------------------------------------------- 3.4 reserved partition
+    if evaluator:
+        summary = evaluator["summary"]
+        trip_rows = []
+        for trip_id, payload in sorted(evaluator["trips"].items()):
+            metrics = payload.get("metrics") or {}
+            trip_rows.append(
+                f"""<tr><td>{trip_id}</td>
+<td class="num">{len(payload.get('predicted_polylines') or [])}</td>
+<td class="num">{metrics.get('evaluated_observations', 'N/A')}</td>
+<td class="num">{_pct(metrics.get('top1_accuracy'))}</td>
+<td class="num">{_pct(metrics.get('pointwise_accuracy'))}</td>
+<td class="num">{_pct(metrics.get('route_continuity'))}</td>
+<td class="num">{_pct(metrics.get('candidate_miss_rate'))}</td>
+<td class="num">{(payload.get('runtime_ms') or 0) / 1000:.1f}</td></tr>"""
+            )
+        add(
+            f"""
+<h3>3.4 Final evaluation on the reserved partition</h3>
+<p>The ten reserved evaluator trips were supplied after the model, the decoder and every
+hyperparameter had already been fixed. They were used for scoring only. No choice in this report
+depends on them.</p>
+<table>
+<tr><th>Trip</th><th class="num">Route pieces</th><th class="num">Evaluable observations</th>
+<th class="num">Classifier Top-1</th><th class="num">Decoded accuracy</th>
+<th class="num">Continuity</th><th class="num">Candidate miss</th><th class="num">Seconds</th></tr>
+{''.join(trip_rows)}
+</table>
+<p>Across the ten reserved trips the decoded accuracy averaged
+<strong>{summary['decoded_accuracy_mean'] * 100:.1f}%</strong>, between
+{summary['decoded_accuracy_min'] * 100:.1f}% and {summary['decoded_accuracy_max'] * 100:.1f}%.
+The classifier alone averaged {summary['top1_accuracy_mean'] * 100:.1f}%, so decoding was worth
+<strong>{summary['decoding_gain_points']:.1f} percentage points</strong> on unseen trips.</p>
+<p>Trip 00000015 is the clear outlier at {float(evaluator['trips']['00000015']['metrics']['pointwise_accuracy']) * 100:.1f}%.
+Its road extract is sparse, 3,225 arcs across a 53 km journey, so long stretches repeat a single
+arc and only 3,832 of 6,854 observations produced a confident alignment. The result is reported
+rather than explained away.</p>
+"""
+        )
 
     # ------------------------------------------------------- 4 bayesian opt
     add("<h2>4. Bayesian hyperparameter optimisation</h2>")
