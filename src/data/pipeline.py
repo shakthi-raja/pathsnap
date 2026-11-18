@@ -29,9 +29,9 @@ def build_inference_features(dataset_folder, trip_id, candidate_config=None):
     return result
 
 
-def build_training_dataset(dataset_folder, trip_id, candidate_config=None, alignment_config=None):
+def build_training_dataset(dataset_folder, trip_id, candidate_config=None, alignment_config=None, allow_reference=False):
     """Return (candidate rows with nullable labels, one-row-per-GPS alignment)."""
-    if _is_student_test(dataset_folder):
+    if _is_student_test(dataset_folder) and not allow_reference:
         raise ValueError('student_test is inference-only; reference loading is prohibited')
     from .labels import align_reference_route, attach_labels
     track,nodes,arcs,route=load_trip(dataset_folder,trip_id)
@@ -66,12 +66,12 @@ def peak_memory_mb():
     return value/(1024**2 if platform.system()=='Darwin' else 1024)
 
 
-def process_trips(folder, output, trip_ids=None, *, inference=False, candidate_config=None):
+def process_trips(folder, output, trip_ids=None, *, inference=False, candidate_config=None, allow_reference=False):
     from .labels import AlignmentConfig
     import importlib.metadata
     folder=Path(folder).resolve(); output=Path(output).resolve()
     # Protect held-out data even when accidentally passed to the training CLI.
-    if not inference and _is_student_test(folder):
+    if not inference and _is_student_test(folder) and not allow_reference:
         raise ValueError('student_test is inference-only; training exports are prohibited')
     protected_input=folder.parent if folder.parent.name.casefold()=='raw' else folder
     project_raw=Path(__file__).resolve().parents[2]/'data'/'raw'
@@ -83,7 +83,8 @@ def process_trips(folder, output, trip_ids=None, *, inference=False, candidate_c
     trip_ids=[normalize_trip_id(tid) for tid in trip_ids]
     if not trip_ids or len(set(trip_ids))!=len(trip_ids):
         raise ValueError('Choose at least one trip without duplicate trip IDs')
-    metadata={'schema_version':'1.0','dataset_folder':str(folder),'mode':'inference' if inference else 'training',
+    mode='inference' if inference else ('evaluation' if allow_reference else 'training')
+    metadata={'schema_version':'1.0','dataset_folder':str(folder),'mode':mode,
               'feature_columns':FEATURE_COLUMNS,'candidate_config':asdict(config),'alignment_config':asdict(AlignmentConfig()),
               'python':platform.python_version(),'packages':{p:importlib.metadata.version(p) for p in
               ['numpy','pandas','scipy','shapely','pyproj','pyarrow']},'trips':{}}
@@ -106,7 +107,7 @@ def process_trips(folder, output, trip_ids=None, *, inference=False, candidate_c
             if inference:
                 result=build_inference_features(folder,tid,config); alignment=None
             else:
-                result,alignment=build_training_dataset(folder,tid,config)
+                result,alignment=build_training_dataset(folder,tid,config,allow_reference=allow_reference)
             result.to_parquet(output/f'{tid}.parquet',index=False)
             row=dict(trip_id=tid,status='success',gps_count=int(result.gps_index.nunique()),candidate_rows=len(result),
                      fallback_observations=int(result.loc[result.fallback_used,'gps_index'].nunique()))
@@ -138,7 +139,10 @@ if __name__=='__main__':
     parser.add_argument('--trip',action='append'); parser.add_argument('--inference',action='store_true')
     parser.add_argument('--radius',type=float,default=50.); parser.add_argument('--max-radius',type=float,default=200.)
     parser.add_argument('--candidates',type=int,default=10)
+    parser.add_argument('--evaluation-export',action='store_true',
+                        help='Allow labelled export of student_test for development evaluation only')
     args=parser.parse_args()
     summary=process_trips(args.folder,args.output,args.trip,inference=args.inference,
-                          candidate_config=CandidateConfig(args.radius,args.candidates,args.max_radius))
+                          candidate_config=CandidateConfig(args.radius,args.candidates,args.max_radius),
+                          allow_reference=args.evaluation_export)
     raise SystemExit(int((summary.status=='failed').any()))

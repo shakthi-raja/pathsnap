@@ -1,4 +1,3 @@
-
 from pathlib import Path
 
 import pandas as pd
@@ -18,16 +17,10 @@ def load_results():
     folds_path = RESULTS_DIR / "cv_fold_results.csv"
 
     if not comparison_path.exists():
-        raise FileNotFoundError(
-            "model_comparison.csv not found. "
-            "Run model training first."
-        )
+        raise FileNotFoundError("model_comparison.csv not found. Run model training first.")
 
     if not folds_path.exists():
-        raise FileNotFoundError(
-            "cv_fold_results.csv not found. "
-            "Run model training first."
-        )
+        raise FileNotFoundError("cv_fold_results.csv not found. Run model training first.")
 
     comparison = pd.read_csv(comparison_path)
     folds = pd.read_csv(folds_path)
@@ -42,9 +35,7 @@ def plot_model_comparison(comparison):
     required = {"model", "macro_f1_mean", "log_loss_mean"}
 
     if not required.issubset(comparison.columns):
-        raise ValueError(
-            f"Comparison file must contain: {required}"
-        )
+        raise ValueError(f"Comparison file must contain: {required}")
 
     # Macro F1 comparison.
     plt.figure(figsize=(10, 6))
@@ -97,14 +88,11 @@ def plot_cross_validation(folds):
     required = {"model", "fold", "macro_f1"}
 
     if not required.issubset(folds.columns):
-        raise ValueError(
-            f"Fold results must contain: {required}"
-        )
+        raise ValueError(f"Fold results must contain: {required}")
 
     plt.figure(figsize=(10, 6))
 
     for model_name, group in folds.groupby("model"):
-
         group = group.sort_values("fold")
 
         plt.plot(
@@ -147,5 +135,4 @@ def generate_all_plots():
 
 
 if __name__ == "__main__":
-
     generate_all_plots()

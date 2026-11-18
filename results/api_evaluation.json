@@ -1,0 +1,67 @@
+{
+  "00000091": {
+    "metrics": {
+      "pointwise_accuracy": 0.7914572864321608,
+      "top1_accuracy": 0.7386934673366834,
+      "route_continuity": 1.0,
+      "classifier_continuity": 0.9621993127147767,
+      "candidate_miss_rate": 0.04773869346733668,
+      "evaluated_observations": 398
+    },
+    "polylines": 1,
+    "runtime_ms": 3873.5211780003738,
+    "observations": 874
+  },
+  "00000052": {
+    "metrics": {
+      "pointwise_accuracy": 1.0,
+      "top1_accuracy": 0.9933333333333333,
+      "route_continuity": 1.0,
+      "classifier_continuity": 0.946360153256705,
+      "candidate_miss_rate": 0.0,
+      "evaluated_observations": 150
+    },
+    "polylines": 1,
+    "runtime_ms": 1161.26481900028,
+    "observations": 262
+  },
+  "00000009": {
+    "metrics": {
+      "pointwise_accuracy": 0.9400921658986175,
+      "top1_accuracy": 0.8986175115207373,
+      "route_continuity": 1.0,
+      "classifier_continuity": 0.9952290076335878,
+      "candidate_miss_rate": 0.013824884792626729,
+      "evaluated_observations": 217
+    },
+    "polylines": 2,
+    "runtime_ms": 4666.733899999599,
+    "observations": 1049
+  },
+  "00000007": {
+    "metrics": {
+      "pointwise_accuracy": 0.9903121636167922,
+      "top1_accuracy": 0.9720129171151776,
+      "route_continuity": 1.0,
+      "classifier_continuity": 0.9955654101995566,
+      "candidate_miss_rate": 0.0,
+      "evaluated_observations": 929
+    },
+    "polylines": 1,
+    "runtime_ms": 2880.062097001428,
+    "observations": 1354
+  },
+  "00000000": {
+    "metrics": {
+      "pointwise_accuracy": 0.963315864697475,
+      "top1_accuracy": 0.9518818484992854,
+      "route_continuity": 0.9992006394884093,
+      "classifier_continuity": 0.9816147082334132,
+      "candidate_miss_rate": 0.0004764173415912339,
+      "evaluated_observations": 2099
+    },
+    "polylines": 3,
+    "runtime_ms": 6298.152950999793,
+    "observations": 2503
+  }
+}

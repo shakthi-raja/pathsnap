@@ -1,4 +1,3 @@
-
 import json
 
 import optuna
@@ -30,25 +29,15 @@ N_TRIALS = 25
 # 2. DEFINE OPTUNA OBJECTIVE
 # --------------------------------------------------
 
+
 def objective(trial, X, y, groups):
 
     # Optuna suggests hyperparameter values.
     params = {
-        "n_estimators": trial.suggest_int(
-            "n_estimators", 80, 300
-        ),
-
-        "max_depth": trial.suggest_int(
-            "max_depth", 4, 25
-        ),
-
-        "min_samples_leaf": trial.suggest_int(
-            "min_samples_leaf", 1, 12
-        ),
-
-        "max_features": trial.suggest_categorical(
-            "max_features", ["sqrt", "log2"]
-        ),
+        "n_estimators": trial.suggest_int("n_estimators", 80, 300),
+        "max_depth": trial.suggest_int("max_depth", 4, 25),
+        "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 12),
+        "max_features": trial.suggest_categorical("max_features", ["sqrt", "log2"]),
     }
 
     cv = GroupKFold(n_splits=N_SPLITS)
@@ -56,7 +45,6 @@ def objective(trial, X, y, groups):
     fold_scores = []
 
     for train_idx, val_idx in cv.split(X, y, groups):
-
         X_train = X.iloc[train_idx]
         X_val = X.iloc[val_idx]
 
@@ -64,13 +52,10 @@ def objective(trial, X, y, groups):
         y_val = y.iloc[val_idx]
 
         if y_train.nunique() != 2:
-            raise ValueError(
-                "A training fold does not contain both classes."
-            )
+            raise ValueError("A training fold does not contain both classes.")
 
         model = make_pipeline(
             SimpleImputer(strategy="median"),
-
             RandomForestClassifier(
                 **params,
                 random_state=RANDOM_STATE,
@@ -98,6 +83,7 @@ def objective(trial, X, y, groups):
 # 3. RUN BAYESIAN OPTIMISATION
 # --------------------------------------------------
 
+
 def run_optimization():
 
     print("=" * 60)
@@ -114,15 +100,11 @@ def run_optimization():
 
     study = optuna.create_study(
         direction="maximize",
-        sampler=optuna.samplers.TPESampler(
-            seed=RANDOM_STATE
-        ),
+        sampler=optuna.samplers.TPESampler(seed=RANDOM_STATE),
     )
 
     study.optimize(
-        lambda trial: objective(
-            trial, X, y, groups
-        ),
+        lambda trial: objective(trial, X, y, groups),
         n_trials=N_TRIALS,
     )
 
@@ -137,9 +119,7 @@ def run_optimization():
 
     trials_path = RESULTS_DIR / "optuna_trials.csv"
 
-    study.trials_dataframe(
-        attrs=("number", "value", "params", "state")
-    ).to_csv(
+    study.trials_dataframe(attrs=("number", "value", "params", "state")).to_csv(
         trials_path,
         index=False,
     )

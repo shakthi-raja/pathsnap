@@ -9,9 +9,9 @@ __pycache__/
 .ipynb_checkpoints/
 
 # ---- Local data (never commit the dataset) ----
-data/
-data/raw/
-data/processed/
+/data/
+/data/raw/
+/data/processed/
 *.parquet
 *.feather
 
