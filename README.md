@@ -215,14 +215,17 @@ Only valid on training and student-test trips.
 
 ## Report
 
+The report is written in LaTeX and compiled to PDF. It needs a TeX installation
+(TeX Live, including `latexmk` or `pdflatex`).
+
 ```bash
 python tools/make_report_figures.py   # charts from results/*.csv
-python tools/build_report.py          # renders report/PathSnap_Report.pdf
+python tools/build_report.py          # writes and compiles report/PathSnap_Report.pdf
 ```
 
-The builder reads the recorded CSVs and artifact metadata, so a regenerated
-report always matches the run in this repository. No metric in the PDF is typed
-by hand.
+The builder generates `report/PathSnap_Report.tex` from the recorded CSVs and
+artifact metadata, so a regenerated report always matches the run in this
+repository. No metric in the PDF is typed by hand.
 
 ## Tests
 

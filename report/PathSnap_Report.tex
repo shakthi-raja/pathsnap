@@ -1,0 +1,616 @@
+
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[a4paper,margin=2.4cm,top=2.3cm,bottom=2.3cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{enumitem}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{ink}{HTML}{14171A}
+\definecolor{muted}{HTML}{6B6F6A}
+\definecolor{rule}{HTML}{DCDDD7}
+
+\captionsetup{font=small,labelfont=bf,textfont=small,skip=5pt}
+\captionsetup[table]{position=top}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\renewcommand{\arraystretch}{1.12}
+
+\titleformat{\section}{\Large\bfseries}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\large\bfseries}{\thesubsection}{0.5em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries}{\thesubsubsection}{0.5em}{}
+\titlespacing*{\section}{0pt}{16pt}{5pt}
+\titlespacing*{\subsection}{0pt}{11pt}{3pt}
+
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.3pt}
+\fancyhead[L]{\footnotesize\color{muted}PathSnap: Distributed Map-Matching and Route Reconstruction}
+\fancyhead[R]{\footnotesize\color{muted}\thepage}
+\begin{document}\thispagestyle{empty}
+\begin{center}
+\vspace*{2.4cm}
+{\footnotesize\scshape PES University \quad Department of Computer Science and Engineering \quad RR Campus}
+
+\vspace{1.8cm}
+{\Huge\bfseries PathSnap}\\[8pt]
+{\LARGE\bfseries Distributed Map-Matching and Route Reconstruction}
+
+\vspace{0.7cm}
+{\color{rule}\rule{0.45\textwidth}{0.4pt}}
+\vspace{0.7cm}
+
+{\large Reconstructing the road a vehicle actually drove from noisy GPS observations, using a
+candidate classifier and a Viterbi decoder over the road network.}
+
+\vspace{2.2cm}
+\begin{tabular}{@{}ll@{}}
+\textbf{Course} & UE24CS352A Machine Learning \\
+\textbf{Repository} & \url{https://github.com/shakthi-raja/pathsnap} \\
+\textbf{Partitions} & 80 training, 10 student-testing, 10 reserved evaluator trips \\
+\end{tabular}
+
+\vspace{1.6cm}
+\begin{tabular}{@{}ll@{}}
+\textbf{Person 1} & Data engineering: reading, network, candidates, features, alignment \\
+\textbf{Person 2} & Model training, comparison and optimisation \\
+\textbf{Person 3} & HMM and Viterbi decoding, FastAPI backend \\
+\textbf{Person 4} & Evaluator interface, Folium maps, integration, report \\
+\end{tabular}
+
+\vfill
+{\footnotesize\color{muted}\today}
+\end{center}
+\clearpage
+\section*{Abstract}
+PathSnap matches noisy GPS observations to a road network and rebuilds the route a vehicle took. The dataset holds 90 trips from 77 locations on six continents, which rules out any global coordinate frame and any feature tied to one city. We score candidate road segments with a binary classifier over scale-free geometric features, then decode a connected path with Viterbi over the road graph. Five model families were compared under grouped cross-validation. The shipped model is HistGradientBoosting, with a student-test Top-1 accuracy of 0.816 and log loss 0.168. On the ten reserved evaluator trips the decoder averaged 89.9\% pointwise accuracy, improving on the classifier alone on every trip.
+
+\clearpage
+\tableofcontents
+\clearpage
+
+\section{Introduction}
+
+A GPS receiver in a city reports positions that wobble around the true path. Buildings reflect
+signals, tunnels and underpasses break reception, and a 1\,Hz receiver can place a moving car on a
+parallel street. Map matching is the task of recovering the road a vehicle actually used from that
+noisy record.
+
+The dataset supplies, for each trip, a GPS trace, a local road network given as nodes and directed
+arcs, and a reference route expressed as an ordered list of arc identifiers. The reference route is
+a sequence, not a label per observation, and that shapes the whole approach: the supervised target
+has to be constructed, and it has to be constructed carefully enough that a wrong target is never
+produced.
+
+This report covers the data audit, the modelling decisions and the evidence behind them, the
+sequential decoder, and the deployed two-laptop system. Every number in it comes from a file in the
+repository, produced by the commands listed in Section~\ref{sec:reproduce}.
+
+\section{Dataset understanding and exploratory data analysis}
+
+The material was treated as a hypothesis rather than as fact. All 90 trips were audited before any
+pipeline code was written, because a mistaken assumption there propagates into every result that
+follows.
+
+\subsection{Structure and partitions}
+
+Each trip folder holds four tab separated files without headers: \texttt{.track} with longitude,
+latitude and a timestamp in seconds; \texttt{.nodes} with node coordinates, where the row index is
+the node identifier; \texttt{.arcs} with directed from and to node identifiers, where the row index
+is the arc identifier; and \texttt{.route} with the reference sequence of arc identifiers. The 80
+training trips are used for fitting and cross-validation, the 10 student-testing trips for
+development comparison, and a further 10 reserved trips for final evaluation only.
+
+\subsection{Audit findings}
+
+Four findings changed the design.
+
+The trips are not confined to one city. They span 77 distinct locations on six continents, from
+$34^{\circ}$ south to $61^{\circ}$ north. A feature built on absolute coordinates would memorise a
+city and fail everywhere else, and no single projected coordinate system is correct across the set,
+so each trip is projected into its own local metric frame.
+
+The median distance from an observation to the nearest road is 4.2 metres, with a 90th percentile of
+6.0 metres. That justifies a 50 metre candidate radius with evidence rather than assumption.
+
+Networks are large: the median trip carries 18,762 arcs and the largest carries 307,392, so
+candidate search needs a spatial index.
+
+The reference route does not always describe the whole drive. In 23 trips it covers less than 70
+percent of the track length, and three trips are badly broken, with usable coverage of 14, 29 and 86
+percent.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{figures/fig_trip_locations.png}
+\caption{Location of every trip in the dataset. Latitude spans 35 degrees south to 62 north, so
+grouped cross-validation over trips is cross-city validation rather than a random split.}
+\label{fig:locations}
+\end{figure}
+
+That last finding matters more than it looks. A reference route covering part of a journey cannot
+supply a label for observations outside it, and forcing one would teach the model to be wrong with
+confidence. The alignment stage therefore marks each observation as confident or unlabelled, and only
+confident observations are used for supervision.
+
+\subsection{Preprocessing}
+
+\begin{enumerate}[leftmargin=1.5em,itemsep=2pt]
+\item Parse the four files for a trip. Node and arc identifiers are 0-based row indices, so identity
+is positional.
+\item Project the trip into a local azimuthal equidistant frame centred on its node extent. All
+distances from this point are metres.
+\item Generate candidates: every arc within 50 metres of an observation, expanding to 200 metres
+when nothing is found, capped at ten candidates ranked by distance.
+\item Build features from previous observations only. No future observation and no reference data
+enters a feature.
+\item Align the reference route to observations with a min-sum forward and backward pass over
+ordered route occurrences, producing a label and a confidence flag per observation.
+\item Emit one parquet per trip holding candidate rows, features, a nullable label and an
+eligibility flag.
+\end{enumerate}
+
+Of 1,304,456 candidate rows across the 80 training trips, 480,258 carried a confident label, or 36.8
+percent. The remainder were withheld by the alignment rather than guessed. After filtering, 70 of the
+80 trips contribute labelled rows; the other ten produced no confident alignment at all.
+
+\subsection{Features and their justification}
+
+Eighteen features describe each observation and candidate pair, grouped in
+Table~\ref{tab:features}. The design rule was that every feature must mean the same thing in every
+city: metres, normalised fractions, angles encoded as sines and cosines, and elapsed time. Latitude
+and longitude are deliberately excluded.
+
+\begin{table}[H]
+\centering
+\caption{Feature groups. Every column is scale-free or expressed in metres, so the model transfers
+to a city it has never seen.}
+\label{tab:features}
+\small
+\begin{tabular}{@{}p{0.30\textwidth}p{0.30\textwidth}p{0.30\textwidth}@{}}
+\toprule
+\textbf{Group} & \textbf{What it captures} & \textbf{Why it transfers} \\
+\midrule
+distance\_m, candidate\_rank & Fit of the observation to the arc & Metres and rank, same meaning anywhere \\
+position\_fraction, position\_m, length\_m & Where along the arc the point falls & Normalised and metric \\
+road\_sin, road\_cos, heading\_sin, heading\_cos, heading\_difference\_rad & Travel direction against road direction & Sines and cosines avoid the wrap at 0 and 360 \\
+movement\_m, dt\_s, speed\_mps, valid\_time\_gap, stationary & Motion between observations & Time based, survives 20 to 149 km/h \\
+gaussian\_emission\_20m, log\_emission\_20m & The decoder's emission term & Derived from distance alone \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth]{figures/fig_gps_over_roads.png}
+\caption{Trip 00000062 in its local metric frame. Blue marks are GPS observations and grey lines are
+the road network. The offset between the trace and the carriageway is the error the model has to
+absorb.}
+\label{fig:gps}
+\end{figure}
+\clearpage
+
+\section{Model experimentation and comparison}
+
+Predicting an arc identifier directly is not viable. Arc identifiers are row positions inside one
+trip, so the same integer means a different road in another city, and there are thousands of classes
+per trip with no relationship between them. The formulation used instead is binary candidate
+classification: each observation contributes several candidate arcs, each pair carries a label
+stating whether that arc is the aligned reference arc, and the model learns to score a candidate. The
+highest scoring candidate is the classifier-only prediction.
+
+Five model families were trained on the labelled training rows with five-fold grouped
+cross-validation, where folds are grouped by trip. Preprocessing sits inside each fold, so imputation
+is fitted on training rows only. Table~\ref{tab:comparison} reports the result. Observation-level
+Top-1 is measured per GPS point rather than per candidate row, because row accuracy is dominated by
+negatives and would flatter a model that rejects everything.
+
+\begin{table}[H]
+\centering
+\caption{Model comparison. Cross-validation uses five folds grouped by trip. Student-test scores
+come from the ten development trips, which were never used for fitting.}
+\label{tab:comparison}
+\footnotesize
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lccccccc@{}}
+\toprule
+\textbf{Model} & \textbf{CV macro F1} & \textbf{CV Top-1} & \textbf{Test macro F1}
+ & \textbf{Test Top-1} & \textbf{Log loss} & \textbf{Fit (s)} & \textbf{Infer (ms)} \\
+\midrule
+RandomForest & 0.848 $\pm$ 0.050 & 73.2\% & 90.3\% & 82.3\% & 0.211 & 52.2 & 1000 \\
+HistGradientBoosting & 0.845 $\pm$ 0.052 & 72.7\% & 90.3\% & 81.6\% & 0.168 & 9.1 & 1224 \\
+LogisticRegression & 0.822 $\pm$ 0.041 & 72.7\% & 87.3\% & 81.1\% & 0.234 & 2.4 & 182 \\
+GaussianNB & 0.720 $\pm$ 0.025 & 69.8\% & 74.7\% & 75.3\% & 1.094 & 0.8 & 105 \\
+DecisionTree & 0.821 $\pm$ 0.045 & 68.8\% & 87.7\% & 78.3\% & 1.241 & 8.9 & 77 \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+The shipped model is \textbf{HistGradientBoosting}.
+
+Top-1 accuracy is the primary metric because the task asks for one road per observation. Macro F1
+and log loss describe probability quality, which matters because those probabilities become the
+decoder's emissions. Models within 0.010 cross-validated Top-1 of the best were treated as tied and
+ranked by log loss. That rule changed no accuracy decision, and it produced a 739 kB artifact instead of the 243 MB forest, which would also exceed repository limits.
+
+\subsection{Analysis of each model}
+\subsubsection*{RandomForest}
+\noindent\textit{Role.} Variance reduction. It handles feature interactions with little tuning and produced the highest raw Top-1 in cross-validation. Its probability estimate is the mean over many trees, which keeps it reasonable though still worse than boosting. It was not shipped because the fitted artifact is 243 MB, beyond repository limits, for half a point of accuracy.
+
+\begin{center}\small\begin{tabular}{@{}ll@{}}\toprule\textbf{Hyperparameter} & \textbf{Initial value} \\ \midrule
+n\_estimators & 80 \\
+max\_depth & None \\
+min\_samples\_leaf & 2 \\
+max\_features & sqrt \\
+\bottomrule\end{tabular}\end{center}
+
+\noindent\textit{Objective.} Gini impurity averaged over bootstrap samples.
+
+\noindent\textit{Measured.} Cross-validated macro F1 0.848 with a fold standard deviation of 0.050, and cross-validated Top-1 73.2\%. On the student-testing trips it reached macro F1 90.3\%, Top-1 82.3\% and log loss 0.211, fitting in 52.2 seconds per fold and scoring in 1000 milliseconds.
+
+\noindent\textit{Fit assessment.} The gap between cross-validated and student-test Top-1 is 9.1 percentage points. A gap that small does not indicate overfitting to the training
+cities, and the fold spread stays narrow enough that no single fold dominates the average.
+
+\subsubsection*{HistGradientBoosting}
+\noindent\textit{Role.} Sequential correction. It matches the forest on macro F1 and beats it on log loss, which matters because those probabilities become the decoder's emissions. It also fits roughly five times faster and ships as a 740 kB artifact. This is the model behind the deployed system.
+
+\begin{center}\small\begin{tabular}{@{}ll@{}}\toprule\textbf{Hyperparameter} & \textbf{Initial value} \\ \midrule
+max\_iter & 200 \\
+learning\_rate & 0.1 \\
+max\_leaf\_nodes & 31 \\
+min\_samples\_leaf & 20 \\
+l2\_regularization & 0.0 \\
+\bottomrule\end{tabular}\end{center}
+
+\noindent\textit{Objective.} binary log loss, minimised stagewise with histogram splits.
+
+\noindent\textit{Measured.} Cross-validated macro F1 0.845 with a fold standard deviation of 0.052, and cross-validated Top-1 72.7\%. On the student-testing trips it reached macro F1 90.3\%, Top-1 81.6\% and log loss 0.168, fitting in 9.1 seconds per fold and scoring in 1224 milliseconds.
+
+\noindent\textit{Fit assessment.} The gap between cross-validated and student-test Top-1 is 8.9 percentage points. A gap that small does not indicate overfitting to the training
+cities, and the fold spread stays narrow enough that no single fold dominates the average.
+
+\subsubsection*{LogisticRegression}
+\noindent\textit{Role.} Linear baseline. It establishes how much signal is available from a weighted sum of the features and trains in about two seconds. It holds up better than expected, which says the features carry useful information and the problem is not purely interaction driven. Its limit is that a linear boundary cannot express thresholds such as a distance cut-off.
+
+\begin{center}\small\begin{tabular}{@{}ll@{}}\toprule\textbf{Hyperparameter} & \textbf{Initial value} \\ \midrule
+C & 1.0 \\
+max\_iter & 1000 \\
+solver & lbfgs \\
+penalty & deprecated \\
+\bottomrule\end{tabular}\end{center}
+
+\noindent\textit{Objective.} binary cross entropy (log loss), minimised by L-BFGS.
+
+\noindent\textit{Measured.} Cross-validated macro F1 0.822 with a fold standard deviation of 0.041, and cross-validated Top-1 72.7\%. On the student-testing trips it reached macro F1 87.3\%, Top-1 81.1\% and log loss 0.234, fitting in 2.4 seconds per fold and scoring in 182 milliseconds.
+
+\noindent\textit{Fit assessment.} The gap between cross-validated and student-test Top-1 is 8.5 percentage points. A gap that small does not indicate overfitting to the training
+cities, and the fold spread stays narrow enough that no single fold dominates the average.
+
+\subsubsection*{GaussianNB}
+\noindent\textit{Role.} Probabilistic floor. It is cheap, needs no tuning, and its independence assumption is plainly wrong here because distance and heading are correlated. The measured log loss confirms that: it is the worst of the five while accuracy stays respectable, which is what an over-confident independence assumption looks like.
+
+\begin{center}\small\begin{tabular}{@{}ll@{}}\toprule\textbf{Hyperparameter} & \textbf{Initial value} \\ \midrule
+var\_smoothing & 1e-09 \\
+\bottomrule\end{tabular}\end{center}
+
+\noindent\textit{Objective.} maximum likelihood under a Gaussian assumption; no iterative loss.
+
+\noindent\textit{Measured.} Cross-validated macro F1 0.720 with a fold standard deviation of 0.025, and cross-validated Top-1 69.8\%. On the student-testing trips it reached macro F1 74.7\%, Top-1 75.3\% and log loss 1.094, fitting in 0.8 seconds per fold and scoring in 105 milliseconds.
+
+\noindent\textit{Fit assessment.} The gap between cross-validated and student-test Top-1 is 5.5 percentage points. A gap that small does not indicate overfitting to the training
+cities, and the fold spread stays narrow enough that no single fold dominates the average.
+
+\subsubsection*{DecisionTree}
+\noindent\textit{Role.} Threshold reader. It tests whether axis-aligned rules are enough and produces rules a person can inspect. The log loss shows severe over-confidence: leaf probabilities collapse to zero and one, so the loss is an order of magnitude worse than the ensembles.
+
+\begin{center}\small\begin{tabular}{@{}ll@{}}\toprule\textbf{Hyperparameter} & \textbf{Initial value} \\ \midrule
+max\_depth & 18 \\
+criterion & gini \\
+min\_samples\_split & 2 \\
+min\_samples\_leaf & 1 \\
+\bottomrule\end{tabular}\end{center}
+
+\noindent\textit{Objective.} Gini impurity for the split criterion.
+
+\noindent\textit{Measured.} Cross-validated macro F1 0.821 with a fold standard deviation of 0.045, and cross-validated Top-1 68.8\%. On the student-testing trips it reached macro F1 87.7\%, Top-1 78.3\% and log loss 1.241, fitting in 8.9 seconds per fold and scoring in 77 milliseconds.
+
+\noindent\textit{Fit assessment.} The gap between cross-validated and student-test Top-1 is 9.5 percentage points. A gap that small does not indicate overfitting to the training
+cities, and the fold spread stays narrow enough that no single fold dominates the average.
+
+
+\subsection{Final evaluation on the reserved partition}
+
+The ten reserved trips were supplied after the model, the decoder and every hyperparameter had been
+fixed. They were used for scoring only, and no decision in this report depends on them.
+
+\begin{table}[H]
+\centering
+\caption{Reserved evaluator partition. Every trip was run through the deployed API, with the reference
+route used only after the prediction existed.}
+\label{tab:evaluator}
+\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+\textbf{Trip} & \textbf{Evaluable} & \textbf{Classifier Top-1} & \textbf{Decoded accuracy}
+ & \textbf{Continuity} & \textbf{Candidate miss} \\
+\midrule
+00000015 & 3832 & 24.1\% & 46.1\% & 100.0\% & 2.6\% \\
+00000017 & 360 & 94.4\% & 98.1\% & 100.0\% & 0.6\% \\
+00000023 & 343 & 98.5\% & 99.4\% & 100.0\% & 0.3\% \\
+00000030 & 210 & 77.6\% & 88.6\% & 100.0\% & 2.4\% \\
+00000049 & 1948 & 97.5\% & 99.5\% & 100.0\% & 0.0\% \\
+00000059 & 372 & 96.2\% & 98.1\% & 100.0\% & 0.0\% \\
+00000067 & 627 & 71.3\% & 90.6\% & 100.0\% & 0.0\% \\
+00000073 & 540 & 96.7\% & 99.4\% & 100.0\% & 0.0\% \\
+00000087 & 835 & 97.2\% & 99.6\% & 100.0\% & 0.0\% \\
+00000094 & 1397 & 65.1\% & 79.3\% & 100.0\% & 0.3\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Across the ten reserved trips the decoded accuracy averaged \textbf{89.9\%}, between 46.1 and 99.6\%. The classifier alone averaged 81.9\%, so decoding was worth \textbf{8.0 percentage points} on trips the model had never seen.
+
+Trip 00000015 is the outlier at 46.1\%. Its road extract is sparse, 3,225 arcs across a 53 kilometre journey, so long
+stretches repeat a single arc and only 3,832 of 6,854 observations produced a confident reference
+alignment. The result is reported as measured.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.84\textwidth]{figures/fig_cv_macro_f1.png}
+\caption{Cross-validated macro F1 for each model, with one standard deviation across the five grouped
+folds.}
+\label{fig:cv}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.84\textwidth]{figures/fig_test_top1_macro_f1.png}
+\caption{Student-test Top-1 accuracy and macro F1 for the same five models.}
+\label{fig:test}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.78\textwidth]{figures/fig_log_loss.png}
+\caption{Student-test log loss. The single decision tree is badly over-confident, which is why its
+probabilities are unusable as decoder emissions.}
+\label{fig:logloss}
+\end{figure}
+\clearpage
+\section{Bayesian hyperparameter optimisation}
+The selected algorithm was tuned with Optuna's Tree-structured Parzen Estimator, a
+Bayesian sampler that models which regions of the search space produce good trials instead of
+sampling uniformly. The objective combined observation-level Top-1 and macro F1, averaged over three
+folds grouped by trip, so tuning could not benefit from a lucky split.
+
+\begin{table}[H]
+\centering
+\caption{Bayesian search settings and outcome.}
+\label{tab:tuning}
+\begin{tabular}{@{}p{0.26\textwidth}p{0.64\textwidth}@{}}
+\toprule
+\textbf{Item} & \textbf{Value} \\
+\midrule
+Sampler & TPE, seed 42 \\
+Trials & 10 \\
+Search space & \texttt{max\_iter} 100 to 350, \texttt{learning\_rate} 0.03 to 0.3 (log),
+\texttt{max\_leaf\_nodes} 15 to 63, \texttt{min\_samples\_leaf} 10 to 60,
+\texttt{l2\_regularization} \(10^{-4}\) to 10 (log) \\
+Objective & \(0.7 \times\) Top-1 \(+\) \(0.3 \times\) macro F1 over three grouped folds \\
+Best objective & 0.7651 \\
+Tuned student-test Top-1 & 81.5\% \\
+Untuned student-test Top-1 & 81.6\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Best configuration returned by the search.}
+\label{tab:bestparams}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Hyperparameter} & \textbf{Best value} \\
+\midrule
+max\_iter & 100 \\
+learning\_rate & 0.034293 \\
+max\_leaf\_nodes & 57 \\
+min\_samples\_leaf & 40 \\
+l2\_regularization & 0.347027 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The tuned configuration did not improve on the untuned model on student-test Top-1. The full record is
+kept in \texttt{results/optuna\_trials.csv}. The honest reading is that the default configuration
+already sat close to the best region of this space for this dataset, so the tuned model was not
+adopted.
+
+\section{HMM and Viterbi route reconstruction}
+
+A classifier scores candidates independently, so consecutive observations can land on arcs that no
+vehicle could drive between. The decoder resolves this by scoring whole sequences rather than single
+observations.
+
+\begin{table}[H]
+\centering
+\caption{Decoder design.}
+\label{tab:hmm}
+\small
+\begin{tabular}{@{}p{0.22\textwidth}p{0.70\textwidth}@{}}
+\toprule
+\textbf{Component} & \textbf{Choice} \\
+\midrule
+Hidden states & The candidate arcs available at each observation, each carrying its projection
+fraction along the arc. \\
+\midrule
+Emission & The classifier's positive-class probability, clipped, normalised across the candidates of
+that observation, then logged. A binary probability is not a distribution over candidates, so
+normalisation is required before states can be compared. \\
+\midrule
+Transition & Directed road distance from the previous candidate to the next, measured with a bounded
+Dijkstra over the sparse adjacency matrix. The score penalises the difference between road distance
+and GPS displacement, backwards movement, and speeds above 50 metres per second. \\
+\midrule
+Missing candidates & Observations with no candidate inside the radius are absent from the grid. The
+transition then spans the real time gap, and the response reports how many observations were
+affected. \\
+\midrule
+Disconnected pairs & When no road link exists within 400 metres the pair receives a heavy finite
+penalty scaled by straight-line distance, so one unreachable pair cannot make a whole trip
+undecodable. Pairs beyond two kilometres are set to negative infinity. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Classifier alone against classifier plus decoder}
+
+The same observations, the same alignment and the same scoring rule were used for both paths, so the
+only difference is the decoder.
+
+\begin{table}[H]
+\centering
+\caption{Pointwise accuracy with and without sequential decoding, on development trips.}
+\label{tab:decoder}
+\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+\textbf{Trip} & \textbf{Evaluable} & \textbf{Classifier Top-1} & \textbf{Decoded}
+ & \textbf{Classifier continuity} & \textbf{Decoded continuity} \\
+\midrule
+00000000 & 2099 & 95.2\% & 96.3\% & 98.2\% & 99.9\% \\
+00000007 & 929 & 97.2\% & 99.0\% & 99.6\% & 100.0\% \\
+00000009 & 217 & 89.9\% & 94.0\% & 99.5\% & 100.0\% \\
+00000052 & 150 & 99.3\% & 100.0\% & 94.6\% & 100.0\% \\
+00000091 & 398 & 73.9\% & 79.1\% & 96.2\% & 100.0\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Decoding improved pointwise accuracy on every trip measured, by between 0.7 and 5.3 percentage points. The largest gains appear where the classifier is weakest, which
+is the expected behaviour: when local evidence is ambiguous, connectivity carries the decision.
+\clearpage
+
+\section{Geographical visualisation with Folium}
+
+Maps are produced by \texttt{src/visualization/maps.py} from live data, and by
+\texttt{tools/render\_trip\_map.py} for report evidence. The evaluator interface renders GPS
+observations, the relevant road context and the predicted route. The reference route appears only in
+report maps built from training or student-testing trips, never in the interface.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.78\textwidth]{figures/folium_trip_00000062.png}
+\caption{Trip 00000062, Yekaterinburg. Blue marks are raw GPS observations, grey lines the road
+network and orange the reference route. Layers toggle independently and the legend is generated only
+for layers actually drawn. The interactive HTML is committed at
+\texttt{results/maps/trip\_00000062\_overview.html}.}
+\label{fig:folium}
+\end{figure}
+
+\section{API, UI and deployment}
+
+Laptop 1 runs the FastAPI backend, which holds the model, the decoder and the reference routes.
+Laptop 2 runs the Streamlit interface and reaches the backend over the local network. Ground truth
+never crosses that link: the response contract has no field for the reference route.
+
+\begin{table}[H]
+\centering
+\caption{Public endpoints.}
+\label{tab:api}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Endpoint} & \textbf{Purpose} \\
+\midrule
+\texttt{GET /health} & Liveness, trip count and the loaded model name. \\
+\texttt{GET /trips} & Trip identifiers discovered from the server directory. Nothing is hardcoded,
+so the reserved partition appears without a code change. \\
+\texttt{POST /predict} & Runs candidates, features, scoring and decoding, then scores the result
+against the reference route held on the server. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.99\textwidth]{figures/ui_live_prediction.png}
+\caption{The evaluator interface on Laptop 2 with the reserved partition loaded. Trip 00000023 was
+selected from the ten shown and scored 99.4 percent pointwise accuracy in 1.3 seconds. The trip list
+is discovered from the server, so the interface required no change when the evaluator data arrived.}
+\label{fig:ui}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.98\textwidth]{figures/api_request_log.png}
+\caption{Request log on Laptop 1 for a prediction, showing the trip, observation count, runtime and
+computed accuracy. The guidelines require this evidence from the machine receiving the requests.}
+\label{fig:apilog}
+\end{figure}
+
+\subsection{Reproducing the results}
+\label{sec:reproduce}
+
+The repository is self-contained apart from the dataset, which is never committed.
+
+\begin{verbatim}
+export PATHSNAP_DATA_ROOT=/path/to/data/raw
+
+python -m src.data.pipeline --folder "$PATHSNAP_DATA_ROOT/train" \
+    --output "$PATHSNAP_DATA_ROOT/../processed/train"
+python -m src.data.pipeline --folder "$PATHSNAP_DATA_ROOT/student_test" \
+    --output "$PATHSNAP_DATA_ROOT/../processed/student_test" --evaluation-export
+
+python -m src.ml.train_models      # comparison, student-test scores, artifact
+python -m src.ml.tune_model        # Bayesian search
+
+export PATHSNAP_EVALUATION_ROOT=/path/to/evaluator_test
+python -m src.api.main             # Laptop 1
+
+export PATHSNAP_API_URL=http://<laptop-1-ip>:8000
+python -m streamlit run src/ui/app.py   # Laptop 2
+\end{verbatim}
+\clearpage
+
+\section{Academic integrity and AI assistance}
+
+Every figure and table in this report is produced by scripts in the repository from the recorded run.
+The comparison table reads \texttt{results/model\_comparison.csv}, the optimisation section reads
+\texttt{results/optuna\_trials.csv}, the decoder comparison reads \texttt{results/api\_evaluation.json},
+and the reserved partition table reads \texttt{results/evaluator\_test\_results.json}.
+
+Reference routes cannot influence a prediction. The service builds candidates, scores them and decodes
+a route before it opens the route file, and the interface has no field that could carry ground truth.
+The reserved partition was not used for training, feature selection, model choice or decoder
+parameters; it arrived after those were fixed.
+
+AI assistance was used during development, for code, analysis and drafts of this document. All
+reported numbers were produced by running the pipeline rather than generated. Every module is covered
+by tests, and each team member is responsible for being able to explain the sections attributed to
+them.
+
+\section{Conclusion}
+
+The system recovers the driven route from noisy GPS on every trip tested.
+On the ten reserved evaluator trips the decoder averaged 89.9 percent pointwise accuracy, against 81.9 percent for the classifier alone, and it improved on the classifier on every trip.
+
+Three decisions carried the result. Treating the task as candidate scoring rather than arc prediction
+made it learnable across 77 cities. Constructing labels through a monotonic alignment, and refusing to
+label where the alignment was uncertain, kept a third of the candidate rows out of training instead of
+teaching the model to be wrong. Decoding with road connectivity turned independent scores into routes
+a vehicle could drive.
+
+The largest remaining weakness is candidate coverage on sparse networks, which is visible in the one
+trip that scored below fifty percent, and the slowest trips take around eighteen seconds on a cold
+server because candidate generation runs inside the request.
+\end{document}
