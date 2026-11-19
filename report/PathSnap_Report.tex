@@ -731,9 +731,10 @@ The service runs in one of two modes. In trained mode it builds candidates, scor
 route and then scores that route against the reference, so the response carries accuracy, Top-1,
 continuity and candidate miss rate. In evaluator mode it reads candidate probabilities that were
 computed ahead of time and never opens a reference route at all, so the response carries only
-geometry, continuity and runtime. The deployment used for demonstration ran in evaluator mode, and
-that is why the readout in Figure~\ref{fig:ui} shows a single metric. Nothing is hidden. The health
-endpoint names the mode, and the response omits what was not computed.
+geometry, continuity and runtime. The interface screenshot in Figure~\ref{fig:ui} comes from an
+evaluator-mode run, which is why its readout shows a single metric, and the request log in
+Figure~\ref{fig:apilog} comes from a trained-mode run, which is why it carries an accuracy. Nothing
+is hidden. The health endpoint names the mode, and the response omits what was not computed.
 
 The pair was exercised over the shared network with the API on Laptop 1 at \texttt{10.30.201.178:8000}
 and the interface on Laptop 2. A prediction for trip 00000023 returned in 1,196 milliseconds,
@@ -770,9 +771,10 @@ continuity and runtime only, as described above.}
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.98\textwidth]{figures/api_request_log.png}
-\caption{Request log on Laptop 1 for the same prediction. Each line records the trip, the observation
-count and the runtime, and the accuracy field reads \texttt{None} because evaluator mode does not open
-a reference route. The guidelines require this evidence from the machine receiving the requests.}
+\caption{Request log on Laptop 1 during a trained-mode run, captured on the machine receiving the
+requests. The server answers \texttt{/health} and \texttt{/trips} first, then serves a prediction for
+trip 00000000 with 2,503 observations in 4,419 milliseconds and reports 96.3 percent pointwise
+accuracy. The final line is the request completed with status 200.}
 \label{fig:apilog}
 \end{figure}
 
