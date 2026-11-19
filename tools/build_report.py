@@ -100,6 +100,31 @@ def _model_hyperparameters() -> dict[str, dict[str, object]]:
     return table
 
 
+def _key_configuration(name: str, params: dict[str, object]) -> str:
+    """One-line description of the settings that define each pipeline."""
+    values = params.get(name, {})
+    if name == "GaussianNB":
+        return r"\texttt{var\_smoothing} " + _tex(values.get("var_smoothing", ""))
+    if name == "LogisticRegression":
+        return (
+            r"\texttt{C} " + _tex(values.get("C", ""))
+            + ", " + _tex(values.get("penalty", "")) + " penalty"
+        )
+    if name == "DecisionTree":
+        return "Gini impurity, " + r"\texttt{max\_depth} " + _tex(values.get("max_depth", ""))
+    if name == "RandomForest":
+        return (
+            _tex(values.get("n_estimators", "")) + " trees, "
+            + r"\texttt{min\_samples\_leaf} " + _tex(values.get("min_samples_leaf", ""))
+        )
+    if name == "HistGradientBoosting":
+        return (
+            _tex(values.get("max_iter", "")) + " iterations, "
+            + r"\texttt{learning\_rate} " + _tex(values.get("learning_rate", ""))
+        )
+    return ""
+
+
 PURPOSE = {
     "GaussianNB": (
         "Probabilistic floor. It is cheap, needs no tuning, and its independence assumption is "
@@ -141,6 +166,45 @@ LOSSES = {
     "HistGradientBoosting": "binary log loss, minimised stagewise with histogram splits.",
 }
 
+FAMILY = {
+    "GaussianNB": "Probabilistic",
+    "LogisticRegression": "Linear",
+    "DecisionTree": "Tree",
+    "RandomForest": "Ensemble",
+    "HistGradientBoosting": "Boosting",
+}
+
+STRENGTHS = {
+    "GaussianNB": (
+        "Strengths: no tuning, a fraction of a second to fit, and a closed-form probability. "
+        "Limitations: it treats every feature as independent, so two features that say the same "
+        "thing are counted twice, and its probabilities are not calibrated."
+    ),
+    "LogisticRegression": (
+        "Strengths: a stable linear decision surface, honest probabilities and three seconds to "
+        "train, which makes it a useful reference point. Limitations: it cannot represent a rule "
+        "such as a hard distance cut-off without an explicit interaction term, and it underfits "
+        "the curved decision boundary that the features describe."
+    ),
+    "DecisionTree": (
+        "Strengths: interpretable axis-aligned rules and no scaling requirement. Limitations: a "
+        "single tree is a high-variance estimator, and its leaf probabilities collapse towards zero "
+        "and one, which is why its log loss is unusable even where its argmax is fine."
+    ),
+    "RandomForest": (
+        "Strengths: the best raw Top-1 on the student-test partition, feature interactions handled "
+        "without scaling, and a probability that is an average over eighty trees. Limitations: a "
+        "243 MB artifact, the slowest scoring path of the five and probabilities that are good but "
+        "not as sharp as boosting."
+    ),
+    "HistGradientBoosting": (
+        "Strengths: the best log loss of the five, competitive Top-1 and macro F1, a 740 kB "
+        "artifact and fast scoring. Limitations: it needs careful early-stopping and "
+        "regularisation settings, and its probability output is only as good as the candidate "
+        "set it scores."
+    ),
+}
+
 
 PREAMBLE = r"""
 \documentclass[11pt,a4paper]{article}
@@ -168,6 +232,7 @@ PREAMBLE = r"""
 \captionsetup[table]{position=top}
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{5pt}
+\setlength{\emergencystretch}{2.5em}
 \renewcommand{\arraystretch}{1.12}
 
 \titleformat{\section}{\Large\bfseries}{\thesection}{0.6em}{}
@@ -197,8 +262,85 @@ def build_tex() -> str:
     )
     evaluator = _read_json(RESULTS / "evaluator_test_results.json")
     api = _read_json(RESULTS / "api_evaluation.json", {})
+    quality = _read_json(RESULTS / "data_quality.json", {})
+    confusion = _read_json(RESULTS / "confusion_matrix.json")
+    missing = (
+        pd.read_csv(RESULTS / "missing_values.csv")
+        if (RESULTS / "missing_values.csv").is_file()
+        else pd.DataFrame()
+    )
+    extended = (
+        pd.read_csv(RESULTS / "model_test_metrics.csv").set_index("model")
+        if (RESULTS / "model_test_metrics.csv").is_file()
+        else pd.DataFrame()
+    )
+    tuned_vs = (
+        pd.read_csv(RESULTS / "tuned_vs_untuned.csv")
+        if (RESULTS / "tuned_vs_untuned.csv").is_file()
+        else pd.DataFrame()
+    )
+    sequence = (
+        pd.read_csv(RESULTS / "sequence_metrics.csv", dtype={"trip_id": str})
+        if (RESULTS / "sequence_metrics.csv").is_file()
+        else pd.DataFrame()
+    )
     params = _model_hyperparameters()
     selected = metadata.get("model_name", "the selected model")
+
+    sequence_rows = ""
+    sequence_means = {}
+    if not sequence.empty:
+        pivot = sequence.pivot_table(
+            index="trip_id",
+            columns="path",
+            values=["transition_precision", "transition_recall", "transition_f1"],
+        )
+        reference_arcs = sequence.groupby("trip_id")["reference_arcs"].first()
+        rows = []
+        for trip_id in sorted(pivot.index):
+            rows.append(
+                f"{_tex(trip_id)} & {int(reference_arcs.loc[trip_id])} "
+                f"& {_pct(pivot.loc[trip_id, ('transition_precision', 'classifier')])} "
+                f"& {_pct(pivot.loc[trip_id, ('transition_recall', 'classifier')])} "
+                f"& {_pct(pivot.loc[trip_id, ('transition_f1', 'classifier')])} "
+                f"& {_pct(pivot.loc[trip_id, ('transition_precision', 'hmm')])} "
+                f"& {_pct(pivot.loc[trip_id, ('transition_recall', 'hmm')])} "
+                f"& {_pct(pivot.loc[trip_id, ('transition_f1', 'hmm')])} \\\\"
+            )
+        means = pivot.mean()
+        rows.append(
+            r"\midrule Mean & -- "
+            f"& {_pct(means[('transition_precision', 'classifier')])} "
+            f"& {_pct(means[('transition_recall', 'classifier')])} "
+            f"& {_pct(means[('transition_f1', 'classifier')])} "
+            f"& {_pct(means[('transition_precision', 'hmm')])} "
+            f"& {_pct(means[('transition_recall', 'hmm')])} "
+            f"& {_pct(means[('transition_f1', 'hmm')])} \\\\"
+        )
+        sequence_rows = "\n".join(rows)
+        gains = (
+            pivot[("transition_f1", "hmm")] - pivot[("transition_f1", "classifier")]
+        )
+        weakest = pivot[("transition_f1", "hmm")].idxmin()
+        classifier_rows = sequence[sequence["path"] == "classifier"].set_index("trip_id")
+        sequence_means = {
+            "weakest_trip": str(weakest),
+            "weakest_f1": float(pivot.loc[weakest, ("transition_f1", "hmm")]),
+            "weakest_predicted_arcs": int(classifier_rows.loc[weakest, "predicted_arcs"]),
+            "weakest_reference_arcs": int(classifier_rows.loc[weakest, "reference_arcs"]),
+            "classifier_f1": float(means[("transition_f1", "classifier")]),
+            "hmm_f1": float(means[("transition_f1", "hmm")]),
+            "classifier_precision": float(means[("transition_precision", "classifier")]),
+            "hmm_precision": float(means[("transition_precision", "hmm")]),
+            "classifier_recall": float(means[("transition_recall", "classifier")]),
+            "hmm_recall": float(means[("transition_recall", "hmm")]),
+            "improved_trips": int((gains > 0).sum()),
+            "total_trips": int(len(gains)),
+            "best_gain_trip": str(gains.idxmax()),
+            "best_gain": float(gains.max()),
+            "worst_gain_trip": str(gains.idxmin()),
+            "worst_gain": float(gains.min()),
+        }
     artifact_kb = ARTIFACTS.joinpath("final_pipeline.joblib").stat().st_size / 1024
 
     doc: list[str] = [PREAMBLE, r"\begin{document}", r"\thispagestyle{empty}"]
@@ -221,20 +363,25 @@ def build_tex() -> str:
 {\large Reconstructing the road a vehicle actually drove from noisy GPS observations, using a
 candidate classifier and a Viterbi decoder over the road network.}
 
-\vspace{2.2cm}
+\vspace{2.0cm}
 \begin{tabular}{@{}ll@{}}
 \textbf{Course} & UE24CS352A Machine Learning \\
+\textbf{Team} & 174 \\
 \textbf{Repository} & \url{https://github.com/shakthi-raja/pathsnap} \\
 \textbf{Partitions} & 80 training, 10 student-testing, 10 reserved evaluator trips \\
 \end{tabular}
 
-\vspace{1.6cm}
-\begin{tabular}{@{}ll@{}}
-\textbf{Person 1} & Data engineering: reading, network, candidates, features, alignment \\
-\textbf{Person 2} & Model training, comparison and optimisation \\
-\textbf{Person 3} & HMM and Viterbi decoding, FastAPI backend \\
-\textbf{Person 4} & Evaluator interface, Folium maps, integration, report \\
+\vspace{1.1cm}
+{\small
+\begin{tabular}{@{}p{0.12\textwidth}p{0.24\textwidth}p{0.26\textwidth}p{0.30\textwidth}@{}}
+\textbf{Person} & \textbf{USN} & \textbf{Name} & \textbf{Contribution} \\
+\midrule
+1 & PES1UG24CS669 & KAVANA P G & Data reading, road network, candidates, features, alignment \\
+2 & PES1UG25CS804 & ANUVIDYA R & Model training, comparison and Bayesian optimisation \\
+3 & PES1UG24CS670 & KRUTHIKA C B & HMM and Viterbi decoding, FastAPI backend \\
+4 & PES1UG25CS843 & SHAKTHI RAJA G P & Evaluator interface, Folium maps, integration, report \\
 \end{tabular}
+}
 
 \vfill
 {\footnotesize\color{muted}\today}
@@ -254,7 +401,7 @@ candidate classifier and a Viterbi decoder over the road network.}
         "grouped cross-validation. The shipped model is "
         + _tex(selected)
         + ", with a student-test Top-1 accuracy of "
-        + _num(metadata.get("test_top1_accuracy"), 3)
+        + _pct(metadata.get("test_top1_accuracy"))
         + " and log loss "
         + _num(metadata.get("test_log_loss"), 3)
         + ". On the ten reserved evaluator trips the decoder averaged "
@@ -281,7 +428,7 @@ noisy record.
 
 The dataset supplies, for each trip, a GPS trace, a local road network given as nodes and directed
 arcs, and a reference route expressed as an ordered list of arc identifiers. The reference route is
-a sequence, not a label per observation, and that shapes the whole approach: the supervised target
+a sequence, not a label per observation, and that shapes the whole approach. The supervised target
 has to be constructed, and it has to be constructed carefully enough that a wrong target is never
 produced.
 
@@ -321,7 +468,7 @@ so each trip is projected into its own local metric frame.
 The median distance from an observation to the nearest road is 4.2 metres, with a 90th percentile of
 6.0 metres. That justifies a 50 metre candidate radius with evidence rather than assumption.
 
-Networks are large: the median trip carries 18,762 arcs and the largest carries 307,392, so
+Networks are large. The median trip carries 18,762 arcs and the largest carries 307,392, so
 candidate search needs a spatial index.
 
 The reference route does not always describe the whole drive. In 23 trips it covers less than 70
@@ -347,6 +494,121 @@ confident observations are used for supervision.
 """
     )
 
+    # ------------------------------------------------- quality and missingness
+    if quality:
+        gaps = quality["gaps"]
+        raw_observations = int(quality["observations"])
+        labelled = int(quality["labelled_observations"])
+        withheld = int(quality["withheld_observations"])
+        missing_rows = []
+        if not missing.empty:
+            reasons = {
+                "movement_m": "First observation of each trip has no predecessor.",
+                "dt_s": "Same rows: elapsed time is undefined without a previous fix.",
+                "speed_mps": "Same rows as the elapsed time.",
+                "gps_heading_rad": "Consecutive fixes can coincide, leaving no heading.",
+                "heading_sin": "Derived from the heading, so absent together with it.",
+                "heading_cos": "Derived from the heading, so absent together with it.",
+                "heading_difference_rad": "Derived from the heading, so absent together with it.",
+            }
+            from src.data.features import FEATURE_COLUMNS
+
+            features = set(FEATURE_COLUMNS)
+            table = missing[
+                missing["column"].isin(features) & (missing["missing"] > 0)
+            ].pivot_table(index="column", columns="partition", values="share")
+            order = ["movement_m", "dt_s", "speed_mps", "gps_heading_rad",
+                     "heading_sin", "heading_cos", "heading_difference_rad"]
+            for column in [name for name in order if name in table.index]:
+                missing_rows.append(
+                    f"{_tt(column)} & {_pct(table.loc[column, 'train'], 2)} "
+                    f"& {_pct(table.loc[column, 'student_test'], 2)} & {reasons[column]} \\\\"
+                )
+        doc.append(
+            r"""
+\subsection{Sampling intervals and missing values}
+
+Two checks belong to the same audit. The first is how often the receiver reports. Across the 80
+training tracks there are """
+            + f"{raw_observations:,}"
+            + r""" observations and """
+            + f"{int(gaps['gap_1s']['count']):,}"
+            + r""" consecutive gaps, of which """
+            + _pct(gaps["gap_1s"]["share"], 2)
+            + r""" are one second, """
+            + _pct(gaps["gap_2_to_5s"]["share"], 2)
+            + r""" span two to five seconds, """
+            + _pct(gaps["gap_6_to_60s"]["share"], 2)
+            + r""" span six to sixty seconds and """
+            + _pct(gaps["gap_over_60s"]["share"], 2)
+            + r""" exceed a minute. A trace that is mostly 1\,Hz with a thin tail of dropouts is where
+simple interpolation breaks down and a decoder that scores transitions between observations helps. The same audit found no
+non-finite longitude, latitude or timestamp in the raw tracks.
+
+The second is how much of that signal can be supervised. Of the """
+            + f"{raw_observations:,}"
+            + r""" observations, """
+            + f"{labelled:,}"
+            + r""" ("""
+            + _pct(quality["labelled_share"])
+            + r""") received a confident label from the alignment and """
+            + f"{withheld:,}"
+            + r""" were withheld. That is a large fraction to leave unlabelled. The decision is deliberate. The
+withheld observations fall where the reference route covers only part of the drive or where two arcs
+are equally plausible, so labelling them would inject noise rather than signal.
+
+Table~\ref{tab:missing} accounts for missing values. Both labelled partitions are covered, and every
+candidate row in them is counted, including rows the model never sees. Every feature is complete
+except for the first fix of a trip and for fixes that did not move. Nothing is imputed by hand. Each
+pipeline carries a median imputer fitted inside its training fold.
+
+\begin{table}[H]
+\centering
+\caption{Missing values per feature, as a share of all candidate rows in each partition. The remaining
+eleven features are complete in both partitions.}
+\label{tab:missing}
+\small
+\begin{tabular}{@{}lllp{0.44\textwidth}@{}}
+\toprule
+\textbf{Feature} & \textbf{Train} & \textbf{Student test} & \textbf{Cause} \\
+\midrule
+"""
+            + "\n".join(missing_rows)
+            + r"""
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.94\textwidth]{figures/fig_data_quality.png}
+\caption{Left: distribution of consecutive sampling gaps over the 80 training tracks. Right: GPS
+observations in the processed training partition that carry a confident label and those the alignment
+withheld.}
+\label{fig:quality}
+\end{figure}
+\clearpage
+"""
+        )
+
+    if quality:
+        candidate_sentence = (
+            "Of "
+            + f"{int(quality['candidate_rows']):,}"
+            + " candidate rows across the 80 training trips, "
+            + f"{int(quality['labelled_candidate_rows']):,}"
+            + " carried a confident label, or "
+            + _pct(quality["labelled_candidate_share"])
+            + ". The remainder were withheld by the alignment rather than guessed. After filtering, "
+            + str(quality["labelled_trips"])
+            + " of the "
+            + str(quality["training_trip_tables"])
+            + " trips contribute labelled rows; the other "
+            + str(quality["training_trip_tables"] - quality["labelled_trips"])
+            + " produced no confident alignment at all."
+        )
+    else:
+        candidate_sentence = ""
     doc.append(
         r"""
 \subsection{Preprocessing}
@@ -361,14 +623,12 @@ when nothing is found, capped at ten candidates ranked by distance.
 \item Build features from previous observations only. No future observation and no reference data
 enters a feature.
 \item Align the reference route to observations with a min-sum forward and backward pass over
-ordered route occurrences, producing a label and a confidence flag per observation.
+ordered route occurrences. The output is a label and a confidence flag per observation.
 \item Emit one parquet per trip holding candidate rows, features, a nullable label and an
 eligibility flag.
 \end{enumerate}
 
-Of 1,304,456 candidate rows across the 80 training trips, 480,258 carried a confident label, or 36.8
-percent. The remainder were withheld by the alignment rather than guessed. After filtering, 70 of the
-80 trips contribute labelled rows; the other ten produced no confident alignment at all.
+%%CANDIDATE_SENTENCE%%
 
 \subsection{Features and their justification}
 
@@ -378,6 +638,7 @@ city: metres, normalised fractions, angles encoded as sines and cosines, and ela
 and longitude are deliberately excluded.
 """
     )
+    doc[-1] = doc[-1].replace("%%CANDIDATE_SENTENCE%%", candidate_sentence)
 
     feature_rows = [
         (r"distance\_m, candidate\_rank", "Fit of the observation to the arc",
@@ -434,7 +695,7 @@ absorb.}
 Predicting an arc identifier directly is not viable. Arc identifiers are row positions inside one
 trip, so the same integer means a different road in another city, and there are thousands of classes
 per trip with no relationship between them. The formulation used instead is binary candidate
-classification: each observation contributes several candidate arcs, each pair carries a label
+classification. Each observation contributes several candidate arcs, each pair carries a label
 stating whether that arc is the aligned reference arc, and the model learns to score a candidate. The
 highest scoring candidate is the classifier-only prediction.
 
@@ -448,27 +709,37 @@ negatives and would flatter a model that rejects everything.
 
     table_rows = []
     for _, row in comparison.iterrows():
+        name = row["model"]
+        metrics = extended.loc[name] if name in extended.index else None
+        continuity = _pct(metrics["classifier_continuity"]) if metrics is not None else "n/a"
+        inference = (
+            f"{metrics['inference_ms']:.0f}" if metrics is not None else f"{row['inference_ms']:.0f}"
+        )
         table_rows.append(
-            f"{_tex(row['model'])} & {row['cv_macro_f1_mean']:.3f} $\\pm$ "
-            f"{row['cv_macro_f1_std']:.3f} & {_pct(row['cv_top1_mean'])} "
-            f"& {_pct(row['test_macro_f1'])} & {_pct(row['test_top1_accuracy'])} "
-            f"& {_num(row['test_log_loss'])} & {row['cv_train_seconds_mean']:.1f} "
-            f"& {row['inference_ms']:.0f} \\\\"
+            f"{_tex(name)} & {_tex(FAMILY.get(name, ''))} & {_key_configuration(name, params)} "
+            f"& {row['cv_macro_f1_mean']:.3f} $\\pm$ {row['cv_macro_f1_std']:.3f} "
+            f"& {_pct(row['test_top1_accuracy'])} & {continuity} "
+            f"& {_pct(row['test_macro_f1'])} & {_num(row['test_log_loss'])} "
+            f"& {inference} \\\\"
         )
 
     doc.append(
         r"""
 \begin{table}[H]
 \centering
-\caption{Model comparison. Cross-validation uses five folds grouped by trip. Student-test scores
-come from the ten development trips, which were never used for fitting.}
+\caption{Comparison of the five models. Cross-validation uses five folds grouped by trip and every
+student-test score comes from the ten development trips, which were never used for fitting. Route
+continuity is measured on the classifier's sequence of best candidates, because the decoder is shared
+by all five models; its own continuity is reported in Section~\ref{sec:hmm}. Inference time is the
+fastest of three prediction passes over the student-test candidates.}
 \label{tab:comparison}
 \footnotesize
 \resizebox{\textwidth}{!}{%
-\begin{tabular}{@{}lccccccc@{}}
+\begin{tabular}{@{}llp{0.19\textwidth}cccccc@{}}
 \toprule
-\textbf{Model} & \textbf{CV macro F1} & \textbf{CV Top-1} & \textbf{Test macro F1}
- & \textbf{Test Top-1} & \textbf{Log loss} & \textbf{Fit (s)} & \textbf{Infer (ms)} \\
+\textbf{Model} & \textbf{Family} & \textbf{Key configuration} & \textbf{CV macro F1}
+ & \textbf{Test Top-1} & \textbf{Route continuity} & \textbf{Test macro F1}
+ & \textbf{Log loss} & \textbf{Inference (ms)} \\
 \midrule
 """
         + "\n".join(table_rows)
@@ -488,15 +759,66 @@ ranked by log loss. That rule changed no accuracy decision, and it produced a ""
         + f"{artifact_kb:.0f}"
         + r""" kB artifact instead of the 243 MB forest, which would also exceed repository limits.
 
+Route continuity in the table is the share of consecutive best-candidate arcs that a directed road
+path can connect inside the decoder's link limit. It is a property of the candidate ranking, so it can
+be measured for every model without running Viterbi, and it separates connectivity failures from
+local scoring failures. Inference time excludes candidate generation and metric scoring; the two models
+compared in Section~\ref{sec:tuning} were timed the same way.
+
 \subsection{Analysis of each model}
 """
     )
 
+    verdicts = {
+        "GaussianNB": (
+            "The gap is small, but the model is last on every probability metric, which is "
+            "underfitting: the independence assumption caps how well it can rank candidates."
+        ),
+        "LogisticRegression": (
+            "The gap is small and the linear boundary transfers; the shortfall is capacity, not "
+            "variance."
+        ),
+        "DecisionTree": (
+            "Accuracy generalises while the log loss does not, so the tree overfits in probability "
+            "space even where its argmax is acceptable."
+        ),
+        "RandomForest": (
+            "No sign of overfitting: the student-test score sits within a point of the "
+            "cross-validated score and the fold spread is moderate."
+        ),
+        "HistGradientBoosting": (
+            "No sign of overfitting: the student-test score is slightly above the cross-validated "
+            "score, and the log loss improves in the same direction."
+        ),
+    }
+
     for _, row in comparison.iterrows():
         name = row["model"]
+        metrics = extended.loc[name] if name in extended.index else None
         param_rows = " \\\\\n".join(
             f"{_tex(key)} & {_tex(value)}" for key, value in params.get(name, {}).items()
         ) + " \\\\"
+        measured = (
+            r"\noindent\textit{Measured.} On the student-testing trips the candidate classifier "
+            "reached precision "
+            + _pct(metrics["test_precision"])
+            + ", recall "
+            + _pct(metrics["test_recall"])
+            + " and macro F1 "
+            + _pct(metrics["test_macro_f1"])
+            + ", with observation-level Top-1 "
+            + _pct(metrics["test_top1"])
+            + " and log loss "
+            + _num(metrics["test_log_loss"])
+            + ", and its best-candidate sequence was "
+            + _pct(metrics["classifier_continuity"])
+            + " continuous. "
+        )
+        inference = (
+            f"{metrics['inference_ms']:.0f}"
+            if metrics is not None
+            else f"{row['inference_ms']:.0f}"
+        )
         doc.append(
             r"\subsubsection*{" + _tex(name) + "}\n"
             r"\noindent\textit{Role.} " + PURPOSE.get(name, "") + "\n\n"
@@ -505,29 +827,77 @@ ranked by log loss. That rule changed no accuracy decision, and it produced a ""
             + param_rows + "\n"
             r"\bottomrule\end{tabular}\end{center}" + "\n\n"
             r"\noindent\textit{Objective.} " + LOSSES.get(name, "") + "\n\n"
-            r"\noindent\textit{Measured.} Cross-validated macro F1 "
+            + measured
+            + "Cross-validated macro F1 was "
             + f"{row['cv_macro_f1_mean']:.3f}"
             + " with a fold standard deviation of "
             + f"{row['cv_macro_f1_std']:.3f}"
-            + ", and cross-validated Top-1 "
+            + ", cross-validated Top-1 was "
             + _pct(row["cv_top1_mean"])
-            + ". On the student-testing trips it reached macro F1 "
-            + _pct(row["test_macro_f1"])
-            + ", Top-1 "
-            + _pct(row["test_top1_accuracy"])
-            + " and log loss "
-            + _num(row["test_log_loss"])
-            + ", fitting in "
+            + ", the mean fit took "
             + f"{row['cv_train_seconds_mean']:.1f}"
-            + " seconds per fold and scoring in "
-            + f"{row['inference_ms']:.0f}"
+            + " seconds per fold, and inference took "
+            + inference
             + r""" milliseconds.
 
-\noindent\textit{Fit assessment.} The gap between cross-validated and student-test Top-1 is """
+\noindent\textit{Strengths and limitations.} """ + STRENGTHS.get(name, "") + "\n\n"
+            + r"\noindent\textit{Overfitting check.} Cross-validated Top-1 was "
+            + _pct(row["cv_top1_mean"])
+            + " and student-test Top-1 was "
+            + _pct(row["test_top1_accuracy"])
+            + ", a gap of "
             + f"{abs(row['test_top1_accuracy'] - row['cv_top1_mean']) * 100:.1f}"
-            + r""" percentage points. A gap that small does not indicate overfitting to the training
-cities, and the fold spread stays narrow enough that no single fold dominates the average.
+            + " percentage points. "
+            + verdicts.get(name, "")
+            + "\n\n"
+        )
 
+    # ---------------------------------------------- 3.3 candidate confusion matrix
+    if confusion:
+        total_rows = sum(confusion.values())
+        precision = confusion["tp"] / (confusion["tp"] + confusion["fp"])
+        recall = confusion["tp"] / (confusion["tp"] + confusion["fn"])
+        f1 = 2 * precision * recall / (precision + recall)
+        doc.append(
+            r"""
+\subsection{Candidate-level confusion matrix}
+
+The table above aggregates, and an aggregate can hide where the errors sit. Figure~\ref{fig:confusion}
+breaks the shipped model's decisions on the student-test candidates into the four cells of a confusion
+matrix, using the default 0.5 threshold. There are """
+            + f"{total_rows:,}"
+            + r""" labelled candidate rows: """
+            + f"{confusion['tp']:,}"
+            + r""" true positives, """
+            + f"{confusion['fp']:,}"
+            + r""" false positives, """
+            + f"{confusion['fn']:,}"
+            + r""" false negatives and """
+            + f"{confusion['tn']:,}"
+            + r""" true negatives. That gives candidate precision """
+            + _pct(precision)
+            + r""", recall """
+            + _pct(recall)
+            + r""" and F1 """
+            + _pct(f1)
+            + r""".
+
+The asymmetry is in the useful direction. A false positive only hurts when it outranks the true
+candidate, and with only """
+            + _pct(confusion["fp"] / total_rows, 2)
+            + r""" of rows falling there, most of them never reach the top of a ranking. A false negative
+is the more expensive error. The reference arc was rejected outright, so the decoder has to recover
+from a neighbour and the observation can only be correct by luck. The counts also show why the hard
+labels are a diagnostic rather than the objective. The decoder never reads a 0/1 decision, it reads
+the probability itself, which is why selection was settled on log loss once Top-1 tied.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.5\textwidth]{figures/fig_confusion_matrix.png}
+\caption{Candidate-level confusion matrix for the shipped model on the student-test partition. Cell
+labels give the row count and the share of all candidate rows.}
+\label{fig:confusion}
+\end{figure}
 """
         )
 
@@ -585,7 +955,16 @@ Trip 00000015 is the outlier at """
             + f"{float(evaluator['trips']['00000015']['metrics']['pointwise_accuracy']) * 100:.1f}"
             + r"""\%. Its road extract is sparse, 3,225 arcs across a 53 kilometre drive, so long
 stretches repeat a single arc and only 3,832 of 6,854 observations produced a confident reference
-alignment. The result is reported as measured.
+alignment. The result is reported as measured. Figure~\ref{fig:evaluator} shows the same comparison
+trip by trip.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.94\textwidth]{figures/fig_evaluator_trips.png}
+\caption{Reserved evaluator partition, classifier Top-1 against decoded pointwise accuracy. Every bar
+pair is one trip; the decoder is above the classifier on all ten.}
+\label{fig:evaluator}
+\end{figure}
 
 \begin{figure}[H]
 \centering
@@ -614,7 +993,7 @@ probabilities are unusable as decoder emissions.}
         )
 
     # ------------------------------------------------------------- 4 bayesian
-    doc.append(r"\section{Bayesian hyperparameter optimisation}" + "\n")
+    doc.append(r"\section{Bayesian hyperparameter optimisation}" + "\n" + r"\label{sec:tuning}" + "\n")
     if tuned and trials is not None:
         best = tuned.get("best_params", {})
         best_rows = " \\\\\n".join(
@@ -631,7 +1010,7 @@ folds grouped by trip, so tuning could not benefit from a lucky split.
 \centering
 \caption{Bayesian search settings and outcome.}
 \label{tab:tuning}
-\begin{tabular}{@{}p{0.26\textwidth}p{0.64\textwidth}@{}}
+\begin{tabular}{@{}p{0.30\textwidth}p{0.63\textwidth}@{}}
 \toprule
 \textbf{Item} & \textbf{Value} \\
 \midrule
@@ -673,17 +1052,61 @@ Untuned student-test Top-1 & """
 \end{tabular}
 \end{table}
 
-The tuned configuration did not improve on the untuned model on student-test Top-1. The full record is
-kept in \texttt{results/optuna\_trials.csv}. The honest reading is that the default configuration
-already sat close to the best region of this space for this dataset, so the tuned model was not
-adopted.
+Table~\ref{tab:tuned} repeats the comparison on the same folds and the same student-test rows, so the
+only difference between the two rows is the hyperparameter configuration.
+
+\begin{table}[H]
+\centering
+\caption{Tuned against untuned model on identical folds and identical student-test rows. Inference time
+is the fastest of three prediction passes over the student-test candidates.}
+\label{tab:tuned}
+\small
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+\textbf{Variant} & \textbf{CV macro F1} & \textbf{Test macro F1} & \textbf{Test Top-1}
+ & \textbf{Log loss} & \textbf{Inference (ms)} \\
+\midrule
+%%TUNED_ROWS%%
+\bottomrule
+\end{tabular}}
+\end{table}
+
+The tuned configuration did not improve the model. Cross-validated macro F1 rose slightly, while
+student-test macro F1 and student-test Top-1 both fell and log loss moved the wrong way. The one clear
+gain is inference time, and it comes from the search choosing a smaller number of boosting iterations
+than the default, not from a better model. On a dataset this size the metric movements sit inside the
+fold noise, so a model that is equal on accuracy, slightly worse on calibration and faster only because
+it is smaller has no argument to replace the one already in the report. The tuned pipeline was
+therefore not adopted.
+
+The search still did its job. It probed a wide region and the defaults won, which says the default
+configuration sat near the optimum of this space. The full trial
+record, including every sampled configuration and its objective, is kept in
+\texttt{results/optuna\_trials.csv}.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.78\textwidth]{figures/fig_optuna_history.png}
+\caption{Objective value for each Bayesian trial. The step line is the best value seen so far; later
+trials did not improve it.}
+\label{fig:optuna}
+\end{figure}
 """
         )
+        tuned_rows = "\n".join(
+            f"{_tex(row['variant'])} & {row['cv_macro_f1']:.3f} $\\pm$ {row['cv_macro_f1_std']:.3f} "
+            f"& {_pct(row['test_macro_f1'])} & {_pct(row['test_top1'])} "
+            f"& {_num(row['test_log_loss'])} & {row['inference_ms']:.0f} \\\\"
+            for _, row in tuned_vs.iterrows()
+        )
+        doc[-1] = doc[-1].replace("%%TUNED_ROWS%%", tuned_rows)
 
     # ------------------------------------------------------------------ 5 HMM
     doc.append(
         r"""
 \section{HMM and Viterbi route reconstruction}
+\label{sec:hmm}
 
 A classifier scores candidates independently, so consecutive observations can land on arcs that no
 vehicle could drive between. The decoder resolves this by scoring whole sequences rather than single
@@ -756,6 +1179,7 @@ only difference is the decoder.
 \caption{Pointwise accuracy with and without sequential decoding, on development trips.}
 \label{tab:decoder}
 \small
+\resizebox{\textwidth}{!}{%
 \begin{tabular}{@{}lccccc@{}}
 \toprule
 \textbf{Trip} & \textbf{Evaluable} & \textbf{Classifier Top-1} & \textbf{Decoded}
@@ -765,7 +1189,7 @@ only difference is the decoder.
             + "\n".join(api_rows)
             + r"""
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \end{table}
 
 Decoding improved pointwise accuracy on every trip measured, by between """
@@ -773,28 +1197,115 @@ Decoding improved pointwise accuracy on every trip measured, by between """
             + " and "
             + f"{max(gains) * 100:.1f}"
             + r""" percentage points. The largest gains appear where the classifier is weakest, which
-is the expected behaviour: when local evidence is ambiguous, connectivity carries the decision.
+is the expected behaviour. When local evidence is ambiguous, connectivity carries the decision.
+
+\subsection{Route-level agreement with the reference sequence}
+
+Pointwise accuracy scores one observation at a time, so it cannot see whether the arcs come out in a
+driveable order. The sequence measure does. Each trip's prediction is reduced to its ordered list of
+distinct arcs, that list is turned into the set of consecutive arc pairs it contains, and the set is
+compared with the pairs in the reference route. Precision is the share of predicted pairs that occur
+in the reference, recall is the share of reference pairs that were predicted, and the F1 of the two is
+the route-level score.
+
+\begin{table}[H]
+\centering
+\caption{Route-level agreement on the student-test trips. Pairs are consecutive arcs in the
+deduplicated sequence, so a repeated arc is counted once.}
+\label{tab:sequence}
+\footnotesize
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lccccccc@{}}
+\toprule
+\textbf{Trip} & \textbf{Reference arcs} & \textbf{Classifier P} & \textbf{Classifier R}
+ & \textbf{Classifier F1} & \textbf{Decoded P} & \textbf{Decoded R} & \textbf{Decoded F1} \\
+\midrule
+%%SEQUENCE_ROWS%%
+\bottomrule
+\end{tabular}}
+\end{table}
+
+The averages tell the same story as the pointwise table. Transition precision rises from """
+            + _pct(sequence_means.get("classifier_precision"))
+            + r""" to """
+            + _pct(sequence_means.get("hmm_precision"))
+            + r""" and recall rises from """
+            + _pct(sequence_means.get("classifier_recall"))
+            + r""" to """
+            + _pct(sequence_means.get("hmm_recall"))
+            + r""", which lifts transition F1 from """
+            + _pct(sequence_means.get("classifier_f1"))
+            + r""" to """
+            + _pct(sequence_means.get("hmm_f1"))
+            + """. The decoded route is closer to the reference on """
+            + str(sequence_means.get("improved_trips"))
+            + " of "
+            + str(sequence_means.get("total_trips"))
+            + r""" trips.
+
+The gains are uneven, and the unevenness is informative. The smallest gain is on trip """
+            + _tex(sequence_means.get("worst_gain_trip"))
+            + r""", about """
+            + f"{sequence_means.get('worst_gain', 0) * 100:.0f}"
+            + r""" points of F1, a short trip where the classifier was already close to the reference
+order and there was little left to repair. The largest gain is on trip """
+            + _tex(sequence_means.get("best_gain_trip"))
+            + r""", where the classifier jumps between arcs and decoding lifts F1 by about """
+            + f"{sequence_means.get('best_gain', 0) * 100:.0f}"
+            + r""" points.
+
+The weakest prediction is trip """
+            + _tex(sequence_means.get("weakest_trip"))
+            + r""", where decoded F1 is still """
+            + _pct(sequence_means.get("weakest_f1"))
+            + r""". The classifier names """
+            + str(sequence_means.get("weakest_predicted_arcs"))
+            + r""" distinct arcs on that trip against a reference of """
+            + str(sequence_means.get("weakest_reference_arcs"))
+            + r""", so the decoded sequence necessarily contains transitions the reference does not have.
+The predicted sequence is far longer than the reference, and no transition score can remove arcs that
+the classifier keeps choosing.
+
+Decoding did not hurt a single trip, but there are two cases where it cannot help much. The first is
+when the reference arc is missing from the candidate set at a radius. No transition score can vote for
+a road that was never generated, so recall is capped before the decoder runs. The second is a sparse
+extract where one arc covers several observations. Distinct-arc scoring then has very few pairs to
+match, and the trip scores low however good the local match is. Both are candidate-generation limits,
+not Viterbi limits, and the first is exactly what the candidate miss rate column in
+Table~\ref{tab:evaluator} measures.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.98\textwidth]{figures/fig_sequence_f1.png}
+\caption{Route-level transition F1 for each student-test trip, classifier only against Viterbi
+decoding.}
+\label{fig:sequence}
+\end{figure}
 \clearpage
 """
         )
+        if sequence_rows:
+            doc[-1] = doc[-1].replace("%%SEQUENCE_ROWS%%", sequence_rows)
 
     # --------------------------------------------------------------- 6 folium
     doc.append(
         r"""
 \section{Geographical visualisation with Folium}
 
-Maps are produced by \texttt{src/visualization/maps.py} from live data, and by
-\texttt{tools/render\_trip\_map.py} for report evidence. The evaluator interface renders GPS
+Maps are produced by the map module in \texttt{src/visualization} from live data, and by the report
+renderer in \texttt{tools} for the evidence shown here. The evaluator interface renders GPS
 observations, the relevant road context and the predicted route. The reference route appears only in
 report maps built from training or student-testing trips, never in the interface.
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.78\textwidth]{figures/folium_trip_00000062.png}
-\caption{Trip 00000062, Yekaterinburg. Blue marks are raw GPS observations, grey lines the road
-network and orange the reference route. Layers toggle independently and the legend is generated only
-for layers actually drawn. The interactive HTML is committed at
-\texttt{results/maps/trip\_00000062\_overview.html}.}
+\includegraphics[width=0.98\textwidth]{figures/folium_trip_00000062_layers.png}
+\caption{Trip 00000062, Yekaterinburg, with every layer the report tool draws. Grey lines are the road
+network, blue marks the raw GPS observations, green is the route predicted by the shipped pipeline and
+dashed orange is the reference route. The prediction follows the reference for most of the drive; the
+reference is dashed and drawn on top so both stay visible where they overlap. Generated by
+\texttt{tools/render\_predicted\_trip\_map.py}, and the interactive HTML with working layer controls is
+committed at \texttt{results/maps/trip\_00000062\_layers.html}.}
 \label{fig:folium}
 \end{figure}
 """
@@ -807,15 +1318,15 @@ for layers actually drawn. The interactive HTML is committed at
 
 Laptop 1 runs the FastAPI backend and holds the model, the decoder and the reference routes. Laptop
 2 runs the Streamlit interface and reaches the backend over the local network. Ground truth never
-crosses that link: the response contract has no field for the reference route.
+crosses that link. The response contract has no field for the reference route.
 
 The service runs in one of two modes. In trained mode it builds candidates, scores them, decodes a
 route and then scores that route against the reference, so the response carries accuracy, Top-1,
 continuity and candidate miss rate. In evaluator mode it reads candidate probabilities that were
 computed ahead of time and never opens a reference route at all, so the response carries only
 geometry, continuity and runtime. The deployment used for demonstration ran in evaluator mode, and
-that is why the readout in Figure~\ref{fig:ui} shows a single metric. Nothing is hidden: the health
-endpoint names the mode and the response simply omits what was not computed.
+that is why the readout in Figure~\ref{fig:ui} shows a single metric. Nothing is hidden. The health
+endpoint names the mode, and the response omits what was not computed.
 
 The pair was exercised over the shared network with the API on Laptop 1 at \texttt{10.30.201.178:8000}
 and the interface on Laptop 2. A prediction for trip 00000023 returned in 1,196 milliseconds,
@@ -879,6 +1390,10 @@ python -m src.api.main             # Laptop 1
 
 export PATHSNAP_API_URL=http://<laptop-1-ip>:8000
 python -m streamlit run src/ui/app.py   # Laptop 2
+
+python tools/render_predicted_trip_map.py --trip 00000062 --partition train \
+    --data-root "$PATHSNAP_DATA_ROOT" \
+    --out-html results/maps/trip_00000062_layers.html
 \end{verbatim}
 \clearpage
 """
@@ -889,10 +1404,21 @@ python -m streamlit run src/ui/app.py   # Laptop 2
         r"""
 \section{Academic integrity and AI assistance}
 
-Every figure and table in this report is produced by scripts in the repository from the recorded run.
-The comparison table reads \texttt{results/model\_comparison.csv}, the optimisation section reads
-\texttt{results/optuna\_trials.csv}, the decoder comparison reads \texttt{results/api\_evaluation.json},
-and the reserved partition table reads \texttt{results/evaluator\_test\_results.json}.
+Every figure and table in this report is produced by scripts in the repository from the recorded run,
+and every number is read from one of these files:
+
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt,topsep=3pt]
+\item model comparison and per-model metrics:\\
+\texttt{results/model\_comparison.csv}, \texttt{results/model\_test\_metrics.csv};
+\item data quality and missing values:\\
+\texttt{results/data\_quality.json}, \texttt{results/missing\_values.csv};
+\item confusion matrix: \texttt{results/confusion\_matrix.json};
+\item Bayesian search and the tuned comparison:\\
+\texttt{results/optuna\_trials.csv}, \texttt{results/tuned\_vs\_untuned.csv};
+\item decoder comparison:\\
+\texttt{results/api\_evaluation.json}, \texttt{results/sequence\_metrics.csv};
+\item reserved partition: \texttt{results/evaluator\_test\_results.json}.
+\end{itemize}
 
 Reference routes cannot influence a prediction. The service builds candidates, scores them and decodes
 a route before it opens the route file, and the interface has no field that could carry ground truth.
@@ -910,7 +1436,7 @@ them.
     conclusion = r"""
 \section{Conclusion}
 
-The system recovers the driven route from noisy GPS on every trip tested.
+The system produces a drivable route from noisy GPS for every trip tested.
 """
     if evaluator:
         conclusion += (
@@ -924,14 +1450,42 @@ The system recovers the driven route from noisy GPS on every trip tested.
 
 Three decisions carried the result. Treating the task as candidate scoring rather than arc prediction
 made it learnable across 77 cities. Constructing labels through a monotonic alignment, and refusing to
-label where the alignment was uncertain, kept a third of the candidate rows out of training instead of
-teaching the model to be wrong. Decoding with road connectivity turned independent scores into routes
+label where the alignment was uncertain, kept %%WITHHELD_SHARE%% of the candidate rows out of training
+instead of teaching the model to be wrong. Decoding with road connectivity turned independent scores into routes
 a vehicle could drive.
 
-The largest remaining weakness is candidate coverage on sparse networks, which is visible in the one
-trip that scored below fifty percent, and the slowest trips take around eighteen seconds on a cold
-server because candidate generation runs inside the request.
+The largest remaining weakness is candidate coverage on sparse networks, which is visible in the
+reserved trip that scored %%WORST_TRIP_ACCURACY%%, and the slowest evaluator request took
+%%SLOWEST_SECONDS%% seconds because candidate generation runs inside the request.
 """
+    if quality:
+        conclusion = conclusion.replace(
+            "%%WITHHELD_SHARE%%", _pct(1 - quality["labelled_candidate_share"])
+        )
+    if evaluator:
+        worst_trip = min(
+            evaluator["trips"].values(),
+            key=lambda payload: (payload.get("metrics") or {}).get("pointwise_accuracy", 1),
+        )
+        slowest = max(
+            (payload.get("runtime_ms", 0) for payload in evaluator["trips"].values()),
+            default=0,
+        )
+        conclusion = conclusion.replace(
+            "%%WORST_TRIP_ACCURACY%%",
+            _pct((worst_trip.get("metrics") or {}).get("pointwise_accuracy")),
+        )
+        conclusion = conclusion.replace("%%SLOWEST_SECONDS%%", f"{slowest / 1000:.0f}")
+    if sequence_means:
+        conclusion = conclusion.replace(
+            "a vehicle could drive.\n",
+            "a vehicle could drive. On the student-test trips the same decoder raised route-level "
+            "transition F1 from "
+            + _pct(sequence_means.get("classifier_f1"))
+            + " to "
+            + _pct(sequence_means.get("hmm_f1"))
+            + ", so the gain shows up in arc order as well as pointwise.\n",
+        )
     doc.append(conclusion)
     doc.append(r"\end{document}" + "\n")
 

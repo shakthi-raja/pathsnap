@@ -13,6 +13,13 @@ from __future__ import annotations
 
 import html
 import logging
+import sys
+from pathlib import Path
+
+# Ensure project root is on sys.path when invoked via standalone streamlit CLI
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 import streamlit as st
 import streamlit.components.v1 as components

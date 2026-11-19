@@ -1,0 +1,31 @@
+{
+  "training_trips": 80,
+  "observations": 208417,
+  "raw_non_finite_values": 0,
+  "gaps": {
+    "gap_1s": {
+      "count": 201051,
+      "share": 0.965027815510447
+    },
+    "gap_2_to_5s": {
+      "count": 6070,
+      "share": 0.02913548721542501
+    },
+    "gap_6_to_60s": {
+      "count": 1147,
+      "share": 0.005505503103145385
+    },
+    "gap_over_60s": {
+      "count": 69,
+      "share": 0.0003311941709825907
+    }
+  },
+  "labelled_observations": 90043,
+  "withheld_observations": 118374,
+  "labelled_share": 0.4320328955891314,
+  "candidate_rows": 1304456,
+  "labelled_candidate_rows": 480258,
+  "labelled_candidate_share": 0.3681672666613516,
+  "labelled_trips": 70,
+  "training_trip_tables": 80
+}
